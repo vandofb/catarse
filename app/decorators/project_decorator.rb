@@ -10,12 +10,22 @@ class ProjectDecorator < Draper::Decorator
     "#{source.state}_warning"
   end
 
-  def time_to_go
-    time_and_unit = nil
-    %w(day hour minute second).detect do |unit|
-      time_and_unit = time_to_go_for unit
+  def show_city
+    if source.city.present?
+      source.city.show_name
+    elsif source.account && source.account.address_city.present? && source.account.address_state.present?
+      "#{source.account.address_city.capitalize}, #{source.account.address_state} "
+    elsif source.user.address_city.present? && source.user.address_state.present?
+      "#{source.user.address_city.capitalize}, #{source.user.address_state} "
     end
-    time_and_unit || time_and_unit_attributes(0, 'second')
+  end
+
+  def time_to_go
+    time_json = source.pluck_from_database("remaining_time_json")
+    {
+      time: time_json.try(:[], 'total'),
+      unit: pluralize_without_number(time_json.try(:[], 'total'), I18n.t("datetime.prompts.#{time_json.try(:[], 'unit')}").downcase)
+    }
   end
 
   def remaining_days
@@ -31,7 +41,7 @@ class ProjectDecorator < Draper::Decorator
       aditional = 'card-success'
     elsif source.failed?
       aditional = 'card-error'
-    elsif source.draft? || source.in_analysis?
+    elsif source.draft? || source.in_analysis? || source.approved?
       aditional = 'card-dark'
     else
       default_card = ""
@@ -40,6 +50,10 @@ class ProjectDecorator < Draper::Decorator
   end
 
   def display_status
+    source.state
+  end
+
+  def display_card_status
     if source.online?
       (source.reached_goal? ? 'reached_goal' : 'not_reached_goal')
     else
@@ -47,19 +61,12 @@ class ProjectDecorator < Draper::Decorator
     end
   end
 
-  # Method for width of progress bars only
-  def display_progress
-    return 100 if source.successful? || source.progress > 100
-    return 8 if source.progress > 0 and source.progress < 8
-    source.progress
-  end
-
   def display_image(version = 'project_thumb' )
     use_uploaded_image(version) || use_video_tumbnail(version)
   end
 
   def display_expires_at
-    source.expires_at ? I18n.l(source.expires_at.try(:in_time_zone,Rails.application.config.time_zone).to_date) : ''
+    source.expires_at ? I18n.l(source.pluck_from_database('zone_expires_at').to_date) : ''
   end
 
   def display_online_date
@@ -72,27 +79,28 @@ class ProjectDecorator < Draper::Decorator
   end
 
   def display_pledged
-    number_to_currency source.pledged
+    number_to_currency source.pledged.floor
   end
 
-  def status_icon_for group_name
-    if source.can_show_preview_link?
-      if source.errors.present?
-        has_error = source.errors.any? do |error|
-          source.error_included_on_group?(error, group_name)
-        end
+  def display_pledged_with_cents
+    number_to_currency source.pledged, precision: 2
+  end
 
-        if has_error
-          content_tag(:span, '', class: 'fa fa-exclamation-circle text-error')
-        else
-          content_tag(:span, '', class: 'fa fa-check-circle text-success')
-        end
+  def status_icon_for group_name, action_name = nil
+    if source.errors.present? && ( ['send_to_analysis', 'publish'].include? action_name )
+      has_error = source.errors.any? do |error|
+        source.error_included_on_group?(error, group_name)
+      end
+
+      if has_error
+        content_tag(:span, '', class: 'fa fa-exclamation-circle fa-fw fa-lg text-error')
+      else
+        content_tag(:span, '', class: 'fa fa-check-circle fa-fw fa-lg text-success') unless source.published?
       end
     end
   end
 
   def display_errors group_name
-    #source.valid?
     if source.errors.present?
       error_messages = ''
       source.errors.each do |error|
@@ -112,6 +120,10 @@ class ProjectDecorator < Draper::Decorator
 
   def display_goal
     number_to_currency source.goal
+  end
+
+  def display_goal_value
+    number_to_currency source.localized.goal
   end
 
   def progress_bar
@@ -147,19 +159,6 @@ class ProjectDecorator < Draper::Decorator
     end
   rescue
     nil
-  end
-
-  def time_to_go_for(unit)
-    time = 1.send(unit)
-
-    if source.expires_at.to_i >= time.from_now.to_i
-      time = ((source.expires_at - Time.zone.now).abs / time).floor
-      time_and_unit_attributes time, unit
-    end
-  end
-
-  def time_and_unit_attributes(time, unit)
-    { time: time, unit: pluralize_without_number(time, I18n.t("datetime.prompts.#{unit}").downcase) }
   end
 end
 

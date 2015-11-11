@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 module Project::StateMachineHandler
   extend ActiveSupport::Concern
 
@@ -5,14 +6,15 @@ module Project::StateMachineHandler
     #NOTE: state machine things
     state_machine :state, initial: :draft do
       state :draft, value: 'draft'
+      state :in_analysis, value: 'in_analysis'
       state :rejected, value: 'rejected'
       state :approved, value: 'approved'
       state :online, value: 'online'
       state :successful, value: 'successful'
       state :waiting_funds, value: 'waiting_funds'
       state :failed, value: 'failed'
+
       state :deleted, value: 'deleted'
-      state :in_analysis, value: 'in_analysis'
 
       event :push_to_draft do
         transition all => :draft #NOTE: when use 'all' we can't use new hash style ;(
@@ -52,7 +54,7 @@ module Project::StateMachineHandler
         }
 
         transition waiting_funds: :successful,  if: ->(project) {
-          project.reached_goal?
+          project.reached_goal? || project.is_flexible?
         }
 
         transition waiting_funds: :failed,      if: ->(project) {
@@ -67,6 +69,14 @@ module Project::StateMachineHandler
 
       after_transition any => [:failed, :successful] do |project, transition|
         project.notify_observers :sync_with_mailchimp
+      end
+
+      after_transition any => :draft do |project, transition|
+        project.update_attributes({ sent_to_draft_at: DateTime.current })
+      end
+
+      after_transition any => :rejected do |project, transition|
+        project.update_attributes({ rejected_at: DateTime.current })
       end
 
       after_transition [:draft, :rejected] => :deleted do |project, transition|

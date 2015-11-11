@@ -4,18 +4,18 @@ require 'rails_helper'
 RSpec.describe Project, type: :model do
   let(:project){ build(:project, goal: 3000) }
   let(:user){ create(:user) }
-  let(:channel){ create(:channel, users: [ user ]) }
-  let(:channel_project){ create(:project, channels: [ channel ]) }
 
   describe "associations" do
     it{ is_expected.to belong_to :user }
     it{ is_expected.to belong_to :category }
     it{ is_expected.to have_many :contributions }
+    it{ is_expected.to have_many :contribution_details }
+    it{ is_expected.to have_many(:payments).through(:contributions) }
     it{ is_expected.to have_one  :project_total }
     it{ is_expected.to have_many :rewards }
     it{ is_expected.to have_many :posts }
     it{ is_expected.to have_many :notifications }
-    it{ is_expected.to have_and_belong_to_many :channels }
+    it{ is_expected.to have_many :project_transitions }
   end
 
   describe "validations" do
@@ -25,7 +25,7 @@ RSpec.describe Project, type: :model do
     it{ is_expected.to validate_numericality_of(:goal) }
     it{ is_expected.to allow_value(10).for(:goal) }
     it{ is_expected.not_to allow_value(8).for(:goal) }
-    it{ is_expected.to ensure_length_of(:headline).is_at_most(140) }
+    it{ is_expected.to validate_length_of(:headline).is_at_most(Project::HEADLINE_MAXLENGTH) }
     it{ is_expected.to allow_value('http://vimeo.com/12111').for(:video_url) }
     it{ is_expected.to allow_value('vimeo.com/12111').for(:video_url) }
     it{ is_expected.to allow_value('https://vimeo.com/12111').for(:video_url) }
@@ -34,16 +34,178 @@ RSpec.describe Project, type: :model do
     it{ is_expected.to allow_value('https://youtube.com/watch?v=UyU-xI').for(:video_url) }
     it{ is_expected.not_to allow_value('http://www.foo.bar').for(:video_url) }
     it{ is_expected.to allow_value('testproject').for(:permalink) }
+    it{ is_expected.to allow_value('test-project').for(:permalink) }
     it{ is_expected.to allow_value(1).for(:online_days) }
     it{ is_expected.not_to allow_value(0).for(:online_days) }
     it{ is_expected.not_to allow_value(61).for(:online_days) }
     it{ is_expected.not_to allow_value('users').for(:permalink) }
+    it{ is_expected.not_to allow_value('agua.sp.01').for(:permalink) }
+  end
+
+  describe "reward size validation" do
+    let(:project) { create(:project, state: 'draft') }
+
+    subject { project.errors['rewards.size'].present? }
+
+    context "flexible project without rewards" do
+      before do
+        create(:flexible_project, project: project)
+        project.rewards.destroy_all
+
+        # need to us transition to trigger state validations
+        project.state_machine.transition_to :online
+       end
+
+      it "should not have rewards.size error" do
+        is_expected.to eq(false) 
+      end
+    end
+
+    context "all or nothing project without rewads" do
+      before do
+        project.rewards.destroy_all
+
+        # need to us transition to trigger state validations
+        project.state_machine.transition_to :in_analysis
+      end
+
+      it "should not have rewards.size error" do
+        is_expected.to eq(false) 
+      end
+    end
+  end
+
+  describe "name validation" do
+    context "when project is not published" do
+      let(:project) { create(:project, state: 'draft') }
+
+      it "should be validate size of name when project is in analysis" do
+        project.state = 'in_analysis'
+        project.name = 'l'*100
+        expect(project.valid?).to eq(false)
+
+        project.name = 'l'*50
+        expect(project.valid?).to eq(true)
+      end
+    end
+  end
+
+  describe "online_days" do
+    context "when we have valid data" do
+      before do
+        create(:project, state: 'online', online_days: 60)
+      end
+
+      it{ is_expected.not_to allow_value(61).for(:online_days) }
+    end
+
+    context "when we have data set manually in the db" do
+      let(:project) {create(:project, state: 'online', online_days: 60)}
+      subject { project }
+      before do
+        project.update_attributes online_days: 61
+        project.save(validate: false)
+      end
+
+      it{ is_expected.to allow_value(62).for(:online_days) }
+    end
+
+  end
+
+  describe "#should_fail?" do
+    let(:project) { create(:project, state: 'online') }
+
+    subject { project.should_fail? }
+
+    before do
+       allow(project).to receive(:expired?).and_return(true)
+    end
+
+    context "when project is flexible" do
+      before do
+        create(:flexible_project, project: project)
+      end
+
+      context "and expired and not reached the goal" do
+        before do
+          allow(project).to receive(:reached_goal?).and_return(false)
+        end
+
+        it { is_expected.to eq(false) }
+      end
+
+      context "and expired and reached the goal" do
+        before do
+          allow(project).to receive(:reached_goal?).and_return(true)
+        end
+
+        it { is_expected.to eq(false) }
+      end
+
+      context "and is not expired" do
+        before do
+          allow(project).to receive(:expired?).and_return(false)
+        end
+
+        it { is_expected.to eq(false) }
+      end
+    end
+
+    context "when project is not flexible" do
+      context "and expired and not reached the goal" do
+        before do
+          allow(project).to receive(:reached_goal?).and_return(false)
+        end
+
+        it { is_expected.to eq(true) }
+      end
+
+      context "and expired and reached the goal" do
+        before do
+          allow(project).to receive(:reached_goal?).and_return(true)
+        end
+
+        it { is_expected.to eq(false) }
+      end
+
+      context "and is not expired" do
+        before do
+          allow(project).to receive(:expired?).and_return(false)
+        end
+
+        it { is_expected.to eq(false) }
+      end
+    end
+  end
+
+  describe "#published?" do
+    subject { project.published? }
+
+    context "when project is failed" do
+      let!(:project) { create(:project, state: 'failed') }
+      it { is_expected.to eq(true) }
+    end
+
+    context "when project is online" do
+      let!(:project) { create(:project, state: 'online') }
+      it { is_expected.to eq(true) }
+    end
+
+    context "when project in approved" do
+      let!(:project) { create(:project, state: 'approved') }
+      it { is_expected.to eq(false) }
+    end
+
+    context "when project in draft" do
+      let!(:project) { create(:project, state: 'draft') }
+      it { is_expected.to eq(false) }
+    end
   end
 
   describe ".of_current_week" do
     subject { Project.of_current_week }
     before do
-      3.times { create(:project, state: 'online', online_date: DateTime.now) }
+      3.times { create(:project, state: 'online', online_date: Time.current) }
       3.times { create(:project, state: 'draft', online_date: 3.days.ago) }
       3.times { create(:project, state: 'successful', online_date: 6.days.ago) }
       5.times { create(:project, state: 'online', online_date: 8.days.ago) }
@@ -52,60 +214,25 @@ RSpec.describe Project, type: :model do
     end
 
     it "should return a collection with projects of current week" do
-      is_expected.to have(10).itens
+      is_expected.to have(9).itens
     end
   end
 
-  describe ".expiring_in_less_of" do
-    subject { Project.expiring_in_less_of('7 days') }
-
-    before do
-      @project_01 = create(:project, state: 'online', online_date: DateTime.now, online_days: 3)
-      @project_02 = create(:project, state: 'online', online_date: DateTime.now, online_days: 30)
-      @project_03 = create(:project, state: 'draft')
-      @project_04 = create(:project, state: 'online', online_date: DateTime.now, online_days: 3)
-    end
-
-    it "should return a collection with projects that is expiring time less of the time in param" do
-      is_expected.to match_array([@project_01, @project_04])
-    end
-  end
-
-  describe ".with_contributions_confirmed_today" do
+  describe ".with_contributions_confirmed_last_day" do
     let(:project_01) { create(:project, state: 'online') }
     let(:project_02) { create(:project, state: 'online') }
-    let(:project_03) { create(:project, state: 'online') }
 
-    subject { Project.with_contributions_confirmed_today }
+    subject { Project.with_contributions_confirmed_last_day }
 
-    before do
-      project_01
-      project_02
-      project_03
-    end
-
-    context "when have confirmed contributions today" do
+    context "when have confirmed contributions last day" do
       before do
-
-        #TODO: need to investigate this timestamp issue when
-        # use DateTime.now or Time.now
-        create(:contribution, state: 'confirmed', project: project_01, confirmed_at: Time.now )
-        create(:contribution, state: 'confirmed', project: project_02, confirmed_at: 2.days.ago )
-        create(:contribution, state: 'confirmed', project: project_03, confirmed_at: Time.now )
+        @confirmed_today = create(:confirmed_contribution, project: project_01)
+        @confirmed_today.payments.first.update_attributes paid_at: Time.now
+        old = create(:confirmed_contribution, project: project_02)
+        old.payments.first.update_attributes paid_at: 2.days.ago
       end
 
-      it { is_expected.to have(2).items }
-      it { expect(subject.include?(project_02)).to eq(false) }
-    end
-
-    context "when does not have any confirmed contribution today" do
-      before do
-        create(:contribution, state: 'confirmed', project: project_01, confirmed_at: 1.days.ago )
-        create(:contribution, state: 'confirmed', project: project_02, confirmed_at: 2.days.ago )
-        create(:contribution, state: 'confirmed', project: project_03, confirmed_at: 5.days.ago )
-      end
-
-      it { is_expected.to have(0).items }
+      it { is_expected.to eq [project_01] }
     end
   end
 
@@ -122,26 +249,11 @@ RSpec.describe Project, type: :model do
   end
 
   describe '.state_names' do
-    let(:states) { [:draft, :rejected, :approved, :online, :successful, :waiting_funds, :failed, :in_analysis] }
+    let(:states) { [:draft, :rejected, :approved, :online, :successful, :waiting_funds, :failed, :deleted, :in_analysis] }
 
     subject { Project.state_names }
 
-    it { is_expected.to eq(states) }
-  end
-
-  describe '.near_of' do
-    before do
-      mg_user = create(:user, address_state: 'MG')
-      sp_user = create(:user, address_state: 'SP')
-      3.times { create(:project, user: mg_user) }
-      6.times { create(:project, user: sp_user) }
-    end
-
-    let(:state) { 'MG' }
-
-    subject { Project.near_of(state) }
-
-    it { is_expected.to have(3).itens }
+    it { is_expected.to match_array(states) }
   end
 
   describe ".by_permalink" do
@@ -171,10 +283,10 @@ RSpec.describe Project, type: :model do
       @project_02 = create(:project, goal: 100)
       @project_03 = create(:project, goal: 100)
 
-      create(:contribution, value: 10, project: @project_01)
-      create(:contribution, value: 10, project: @project_01)
-      create(:contribution, value: 30, project: @project_02)
-      create(:contribution, value: 10, project: @project_03)
+      create(:confirmed_contribution, value: 10, project: @project_01)
+      create(:confirmed_contribution, value: 10, project: @project_01)
+      create(:confirmed_contribution, value: 30, project: @project_02)
+      create(:confirmed_contribution, value: 10, project: @project_03)
     end
 
     it { is_expected.to have(2).itens }
@@ -189,66 +301,30 @@ RSpec.describe Project, type: :model do
 
     end
 
-    it { should = [@project_02] }
-  end
-
-  describe '.video_url' do
-    before do
-      CatarseSettings[:minimum_goal_for_video] = 5000
-    end
-    context 'when goal is above minimum' do
-      subject { @project_01 }
-
-      before do
-        @project_01 = create(:project, goal: 6000, state: 'approved')
-      end
-
-      it{ is_expected.not_to allow_value(nil).for(:video_url) }
-    end
-
-    context 'when goal is below minimum' do
-      subject { @project_02 }
-
-      before do
-        CatarseSettings[:minumum_goal_for_video] = 5000
-        @project_02 = create(:project, goal: 4000)
-      end
-
-      it{ is_expected.to allow_value(nil).for(:video_url) }
-    end
-
-    context 'when goal is minimum' do
-      subject { @project_03 }
-
-      before do
-        @project_03 = build(:project, goal: 5000, state: 'approved', video_url: nil)
-      end
-
-      it{ is_expected.not_to allow_value(nil).for(:video_url) }
-    end
+    it { is_expected.to eq [@project_02] }
   end
 
   describe '.by_online_date' do
-    subject { Project.by_online_date(Time.now.to_date.to_s) }
+    subject { Project.by_online_date(Time.current.to_date.to_s) }
 
     before do
-      @project_01 = create(:project, online_date: Time.now.to_s)
+      @project_01 = create(:project, online_date: Time.current.to_s)
       @project_02 = create(:project, online_date: 2.weeks.ago)
 
     end
 
-    it { should = [@project_01] }
+    it { is_expected.to eq [@project_01] }
   end
 
   describe '.by_expires_at' do
     subject { Project.by_expires_at('10/10/2013') }
 
     before do
-      @project_01 = create(:project, online_date: '10/10/2013', online_days: 1)
-      @project_02 = create(:project, online_date: '09/10/2013', online_days: 1)
+      @project_01 = create(:project, online_date: '2013-10-10'.to_date.in_time_zone, online_days: 1)
+      @project_02 = create(:project, online_date: '2013-10-09'.to_date.in_time_zone, online_days: 1)
     end
 
-    it { should = [@project_01] }
+    it { is_expected.to eq [@project_02] }
   end
 
   describe '.order_by' do
@@ -302,9 +378,9 @@ RSpec.describe Project, type: :model do
     let(:project_03) { create(:project) }
 
     before do
-      project_01.update_attributes({ online_date: '17/01/2013', online_days: 1 })
-      project_02.update_attributes({ online_date: '21/01/2013', online_days: 1 })
-      project_03.update_attributes({ online_date: '23/01/2013', online_days: 1 })
+      project_01.update_attributes({ online_date: '17/01/2013'.to_time, online_days: 1 })
+      project_02.update_attributes({ online_date: '21/01/2013'.to_time, online_days: 1 })
+      project_03.update_attributes({ online_date: '23/01/2013'.to_time, online_days: 1 })
     end
 
     it { is_expected.to eq([project_02, project_01]) }
@@ -341,7 +417,7 @@ RSpec.describe Project, type: :model do
   describe ".expiring" do
     before do
       @p = create(:project, online_date: Time.now, online_days: 13)
-      create(:project, online_date: Time.now, online_days: 1, online_date: Time.now - 2.days)
+      create(:project, online_days: 1, online_date: Time.now - 2.days)
     end
     subject{ Project.expiring }
     it{ is_expected.to eq([@p]) }
@@ -365,52 +441,13 @@ RSpec.describe Project, type: :model do
     it{ is_expected.to eq([@p]) }
   end
 
-  describe "send_verify_moip_account_notification" do
-    context "when not have projects on pagarme" do
-      before do
-        @p = create(:project, state: 'online', online_date: '2014-10-9'.to_date, online_days: 3)
-        create(:project, state: 'draft')
-      end
-
-      it "should create notification for all projects that is expiring" do
-        expect(ProjectNotification).to receive(:notify_once).
-          with(:verify_moip_account, @p.user, @p, {from_email: CatarseSettings[:email_payments]})
-        Project.send_verify_moip_account_notification
-      end
-    end
-
-    context "when have projects using pagarme" do
-      before do
-        @p = create(:project, state: 'online', online_date: DateTime.now, online_days: 3)
-        CatarseSettings[:projects_enabled_to_use_pagarme] = @p.permalink
-        create(:project, state: 'draft')
-      end
-
-      it "should not create notification for projects that using pagarme" do
-        expect(ProjectNotification).to_not receive(:notify_once).
-          with(:verify_moip_account, @p.user, @p, {from_email: CatarseSettings[:email_payments]})
-        Project.send_verify_moip_account_notification
-      end
-    end
-  end
-
-  describe ".from_channels" do
-    let(:channel){create(:channel)}
-    before do
-      @p = create(:project, channels: [channel])
-      create(:project, channels: [])
-    end
-    subject{ Project.from_channels([channel.id]) }
-    it{ is_expected.to eq([@p]) }
-  end
-
   describe '#reached_goal?' do
     let(:project) { create(:project, goal: 3000) }
     subject { project.reached_goal? }
 
     context 'when sum of all contributions hit the goal' do
       before do
-        create(:contribution, value: 4000, project: project)
+        create(:confirmed_contribution, value: 4000, project: project)
       end
       it { is_expected.to eq(true) }
     end
@@ -421,52 +458,66 @@ RSpec.describe Project, type: :model do
   end
 
   describe '#in_time_to_wait?' do
-    let(:contribution) { create(:contribution, state: 'waiting_confirmation') }
+    let(:contribution) { create(:pending_contribution) }
     subject { contribution.project.in_time_to_wait? }
 
-    context 'when project expiration is in time to wait' do
+    context 'when project has pending contributions' do
       it { is_expected.to eq(true) }
     end
 
-    context 'when project expiration time is not more on time to wait' do
-      let(:contribution) { create(:contribution, created_at: 1.week.ago) }
+    context 'when project has pending contributions older than 1 week' do
+      let(:contribution) { create(:pending_contribution) }
+      before do
+        contribution.payments.update_all created_at: Time.now - 1.week
+      end
+      it { is_expected.to eq(false) }
+    end
+
+    context 'when project has no pending contributions' do
+      let(:contribution) { create(:contribution) }
       it {is_expected.to eq(false)}
     end
   end
 
-  describe "#search_on_name" do
-    before { @p = create(:project, name: 'foo') }
-    context "when project exists" do
-      subject{ [Project.search_on_name('foo'), Project.pg_search('fóõ')] }
-      it{ is_expected.to eq([[@p],[@p]]) }
+  describe "#search_tsearch" do
+    subject{ Project.search_tsearch 'críptõrave' }
+
+    before do
+      @p = create(:project, name: 'criptorave')
+      create(:project, name: 'nyan cat')
     end
-    context "when project is not found" do
-      subject{ Project.search_on_name('lorem') }
-      it{ is_expected.to eq([]) }
+
+    it{ is_expected.to match_array([@p]) }
+  end
+
+  describe "#search_trm" do
+    subject{ Project.search_trm('críptõ') }
+
+    before do
+      @p = create(:project, name: 'criptorave')
+      create(:project, name: 'nyan cat')
     end
+
+    it{ is_expected.to match_array([@p]) }
   end
 
   describe "#pg_search" do
-    before { @p = create(:project, name: 'foo') }
-    context "when project exists" do
-      subject{ [Project.pg_search('foo'), Project.pg_search('fóõ')] }
-      it{ is_expected.to eq([[@p],[@p]]) }
-    end
-    context "when project is not found" do
-      subject{ Project.pg_search('lorem') }
-      it{ is_expected.to eq([]) }
-    end
-  end
+    subject{ Project.pg_search('críptõ') }
+    let(:tsearch_return) { [] }
 
-  describe "#pledged_and_waiting" do
-    subject{ project.pledged_and_waiting }
     before do
-      @confirmed = create(:contribution, value: 10, state: 'confirmed', project: project)
-      @waiting = create(:contribution, value: 10, state: 'waiting_confirmation', project: project)
-      create(:contribution, value: 100, state: 'refunded', project: project)
-      create(:contribution, value: 1000, state: 'pending', project: project)
+      allow(Project).to receive(:search_tsearch).and_return(tsearch_return)
+      allow(Project).to receive(:search_trm).and_return(['trm'])
     end
-    it{ is_expected.to eq(@confirmed.value + @waiting.value) }
+
+    context "when tsearch is not empty" do
+      let(:tsearch_return) { ["tsearch"] }
+      it { is_expected.to match_array(tsearch_return) }
+    end
+
+    context "when tsearch is empty" do
+      it { is_expected.to match_array(['trm']) }
+    end
   end
 
   describe "#pledged" do
@@ -544,19 +595,6 @@ RSpec.describe Project, type: :model do
     end
   end
 
-  describe "#expires_at" do
-    subject{ project.expires_at }
-    context "when we do not have an online_date" do
-      let(:project){ build(:project, online_date: nil, online_days: 1) }
-      it{ is_expected.to be_nil }
-    end
-    context "when we have an online_date" do
-      let(:project){ create(:project, online_date: Time.zone.now, online_days: 1)}
-      before{project.save!}
-      it{ expect(subject.to_time).to eq(Time.zone.tomorrow.end_of_day.to_s(:simple)) }
-    end
-  end
-
   describe '#selected_rewards' do
     let(:project){ create(:project) }
     let(:reward_01) { create(:reward, project: project) }
@@ -564,19 +602,12 @@ RSpec.describe Project, type: :model do
     let(:reward_03) { create(:reward, project: project) }
 
     before do
-      create(:contribution, state: 'confirmed', project: project, reward: reward_01)
-      create(:contribution, state: 'confirmed', project: project, reward: reward_03)
+      create(:confirmed_contribution, project: project, reward: reward_01)
+      create(:confirmed_contribution, project: project, reward: reward_03)
     end
 
     subject { project.selected_rewards }
     it { is_expected.to eq([reward_01, reward_03]) }
-  end
-
-  describe "#last_channel" do
-    let(:channel){ create(:channel) }
-    let(:project){ create(:project, channels: [ create(:channel), channel ]) }
-    subject{ project.last_channel }
-    it{ is_expected.to eq(channel) }
   end
 
   describe "#new_draft_recipient" do
@@ -588,61 +619,24 @@ RSpec.describe Project, type: :model do
     it{ is_expected.to eq(@user) }
   end
 
-  describe "#notification_type" do
-    subject { project.notification_type(:foo) }
-    context "when project does not belong to any channel" do
-      it { is_expected.to eq(:foo) }
-    end
-
-    context "when project does belong to a channel" do
-      let(:project) { channel_project }
-      it{ is_expected.to eq(:foo_channel) }
-    end
-  end
-
-  describe ".enabled_to_use_pagarme" do
-    before do
-      @project_01 = create(:project, permalink: 'a', online_date: '2014-10-9'.to_date)
-      @project_02 = create(:project, permalink: 'b', online_date: '2014-10-9'.to_date)
-      @project_03 = create(:project, permalink: 'c', online_date: '2014-10-9'.to_date)
-      @project_04 = create(:project, online_date: '2014-11-11'.to_date)
-
-      CatarseSettings[:projects_enabled_to_use_pagarme] = 'a, c'
-    end
-
-    subject { Project.enabled_to_use_pagarme }
-
-    it { is_expected.to match_array([@project_01, @project_03, @project_04])}
-  end
-
-  describe "#using_pagarme?" do
-    let(:project) { create(:project, permalink: 'foo', online_date: '2014-10-01'.to_date) }
-
-    subject { project.using_pagarme? }
-
-    context "when project is using pagarme" do
-      before do
-        CatarseSettings[:projects_enabled_to_use_pagarme] = 'foo'
-      end
-
-      it { is_expected.to be_truthy }
-    end
-
-    context "when project is online_date >= 10/11" do
-      before do
-        project.update_attribute(:online_date, '2014-11-11'.to_date)
-      end
-
-      subject { project.using_pagarme? }
-      it { is_expected.to be_truthy }
-    end
-
-    context "when project is not using pagarme" do
-      before do
-        CatarseSettings[:projects_enabled_to_use_pagarme] = nil
-      end
-
-      it { is_expected.to be_falsey }
+  describe "#to_analytics_json" do
+    subject{ project.to_analytics_json }
+    it do
+      is_expected.to eq({
+        id: project.id,
+        permalink: project.permalink,
+        total_contributions: project.total_contributions,
+        pledged: project.pledged,
+        project_state: project.state,
+        category: project.category.name_pt,
+        project_goal: project.goal,
+        project_online_date: project.online_date,
+        project_expires_at: project.expires_at,
+        project_address_city: project.account.try(:address_city),
+        project_address_state: project.account.try(:address_state),
+        account_entity_type: project.account.try(:entity_type)
+      }.to_json)
     end
   end
+
 end

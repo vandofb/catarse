@@ -1,4 +1,4 @@
-# PostgreSQL. Versions 9.1 or later are supported.
+# PostgreSQL. Versions 9.4 or later are supported.
 #
 # Install the pg driver:
 #   gem install pg
@@ -14,8 +14,8 @@ development:
   host: localhost
   database: catarse_development
   pool: 5
-  username: postgres
-  password: password
+  username: postgres # <== Change me!!
+  password: password # <== Change me too!
 
 
   # Connect on a TCP socket. Omitted by default since the client uses a
@@ -41,10 +41,8 @@ test:
   adapter: postgresql
   encoding: unicode
   host: localhost
+  port: 5432
   database: catarse_test
   pool: 5
-  username: postgres
-  password: password
-
-
-
+  username: postgres # <== Change me!
+  password: password # <== Same here!

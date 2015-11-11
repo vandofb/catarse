@@ -37,7 +37,13 @@ RSpec.describe ContributionPolicy do
     end
   end
 
-  permissions(:new?){ it_should_behave_like "create permissions" }
+  permissions(:new?){
+    ['draft', 'deleted', 'rejected', 'successful', 'failed', 'waiting_funds', 'in_analysis'].each do |state|
+      it "should deny access if project is #{state}" do
+        contribution.project.update_attributes state: state
+      end
+    end
+  }
 
   permissions(:create?){ it_should_behave_like "create permissions" }
 
@@ -56,9 +62,9 @@ RSpec.describe ContributionPolicy do
       let(:current_user) { create(:user, admin: false) }
       let(:user) { nil }
       before do
-        create(:contribution, state: 'waiting_confirmation', project: project)
-        @contribution = create(:contribution, anonymous: false, state: 'confirmed', project: project)
-        @anon_contribution = create(:contribution, anonymous: true, state: 'confirmed', project: project)
+        create(:pending_contribution, project: project)
+        @contribution = create(:confirmed_contribution, anonymous: false, project: project)
+        @anon_contribution = create(:confirmed_contribution, anonymous: true, project: project)
       end
 
       subject { ContributionPolicy::UserScope.new(current_user, user, project.contributions).resolve.order('created_at desc') }

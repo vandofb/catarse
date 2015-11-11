@@ -3,12 +3,26 @@ require 'rails_helper'
 RSpec.describe ProjectObserver do
   let(:contribution){ create(:contribution, key: 'should be updated', payment_method: 'should be updated', state: 'confirmed', confirmed_at: nil) }
   let(:project) do
-    project = create(:project, state: 'draft', goal: 3000) 
+    project = create(:project, state: 'draft', goal: 3000)
     create(:reward, project: project)
     project.update_attribute :state, :online
     project
   end
-  let(:channel) { create(:channel) }
+
+  let(:admin_user) do
+    CatarseSettings[:email_payments] = 'admin@foo.com'
+    create(:user, email: CatarseSettings[:email_payments])
+  end
+
+  let(:redbooth_user) do
+    CatarseSettings[:email_redbooth] = 'foo@foo.com'
+    create(:user, email: CatarseSettings[:email_redbooth])
+  end
+
+  let(:zendesk_user_atendimento) do
+    CatarseSettings[:email_contact] = 'foo_contato@foo.com'
+    create(:user, email: CatarseSettings[:email_contact])
+  end
 
   subject{ contribution }
 
@@ -20,7 +34,42 @@ RSpec.describe ProjectObserver do
     CatarseSettings[:company_name] = 'Catarse'
   end
 
-  describe "after_save" do
+  describe "#before_save" do
+
+    context "when change the online_date" do
+      let(:project) { build(:project, state: 'approved', online_days: 10) }
+      before do
+        project.update_attribute :online_date, Time.current
+        expect(project.expires_at).to eq ( Time.current + 10.days ).end_of_day
+      end
+      it "should update expires_at" do
+        project.save(validate: false)
+      end
+    end
+
+    context "when change the online_days" do
+      let(:project) { build(:project, state: 'approved', online_date: Time.current) }
+      before do
+        project.update_attribute :online_days, 20
+        expect(project.expires_at).to eq ( Time.current + 20.days ).end_of_day
+      end
+      it "should update expires_at" do
+        project.save(validate: false)
+      end
+    end
+
+    context "when project is not online" do
+      let(:project) { build(:project, state: 'approved', online_date: nil) }
+      before do
+        expect(project.expires_at).to eq nil
+      end
+      it "should update expires_at" do
+        project.save(validate: false)
+      end
+    end
+  end
+
+  describe "#after_save" do
     let(:project) { build(:project, state: 'approved', online_date: 10.days.from_now) }
 
     context "when change the online_date" do
@@ -28,297 +77,161 @@ RSpec.describe ProjectObserver do
         expect(project).to receive(:remove_scheduled_job).with('ProjectSchedulerWorker')
         expect(ProjectSchedulerWorker).to receive(:perform_at)
       end
+      it "should call project scheduler" do
+        project.save(validate: false)
+      end
+    end
 
-      it { project.save(validate: false) }
+    context "when we change the video_url" do
+      let(:project){ create(:project, video_url: 'http://vimeo.com/11198435', state: 'draft')}
+      before do
+        expect(ProjectDownloaderWorker).to receive(:perform_async).with(project.id).never
+      end
+      it "should call project downloader" do
+        project.save(validate: false)
+      end
     end
   end
 
-  describe "after_create" do
+  describe "#after_create" do
     before do
       expect_any_instance_of(ProjectObserver).to receive(:after_create).and_call_original
       project
     end
 
     it "should create notification for project owner" do
-      expect(ProjectNotification.where(user_id: project.user.id, template_name: 'project_received', project_id: project.id).first).not_to be_nil
-    end
-
-    context "after creating the project" do
-      let(:project) { build(:project) }
-
-      before do
-        expect(InactiveDraftWorker).to receive(:perform_at)
-      end
-
-      it "should call perform at in inactive draft worker" do
-        project.save
-      end
+      expect(ProjectNotification.where(user_id: project.user.id, template_name: 'project_received', project_id: project.id).count).to eq 1
     end
   end
 
-  describe "when project is sent to curator" do
-    let(:project) do
-      project = create(:project, state: 'draft')
-      create(:reward, project: project)
-      project
-    end
-    let(:user) { create(:user, email: ::CatarseSettings[:email_projects])}
-
+  describe "#from_draft_to_in_analysis" do
     before do
-      user
-      project
-      project.send_to_analysis!
+      @user = create(:user, email: ::CatarseSettings[:email_projects])
+      @project = project = create(:project, state: 'draft')
+      create(:reward, project: project)
+      project.notify_observers(:from_draft_to_in_analysis)
     end
 
     it "should create notification for catarse admin" do
-      expect(ProjectNotification.where(user_id: user.id, template_name: :new_draft_project, project_id: project.id).first).not_to be_nil
+      expect(ProjectNotification.where(user_id: @user.id, template_name: :new_draft_project, project_id: @project.id).count).to eq 1
     end
   end
 
-  describe "before_save" do
-    let(:channel){ create(:channel) }
-    let(:project){ create(:project, video_url: 'http://vimeo.com/11198435', state: 'draft')}
-
-    context "when project is approved and belongs to a channel" do
-      let(:project){ create(:project, video_url: 'http://vimeo.com/11198435', state: 'draft', channels: [channel])}
-      before do
-        project.update_attributes state: 'approved'
-      end
-
-      it "should call notify using channel data" do
-        expect(ProjectNotification).to receive(:notify_once).with(
-          :project_visible_channel,
-          project.user,
-          project,
-          {
-            from_email: channel.email,
-            from_name: channel.name
-          }
-        )
-        project.push_to_online
-      end
-    end
-
-    context "when project is approved" do
-      before do
-        project.update_attributes state: 'approved'
-        expect(ProjectDownloaderWorker).to receive(:perform_async).with(project.id).never
-      end
-
-      it "should call notify and do not call download_video_thumbnail" do
-        expect(ProjectNotification).to receive(:notify_once).with(
-          :project_visible,
-          project.user,
-          project,
-          {
-            from_email: CatarseSettings[:email_projects],
-            from_name: CatarseSettings[:company_name]
-          }
-        )
-        project.push_to_online
-      end
-    end
-
-    context "when video_url changes" do
-      before do
-        expect(ProjectDownloaderWorker).to receive(:perform_async).with(project.id).at_least(1)
-        expect(ProjectNotification).to receive(:notify).never
-        expect(ProjectNotification).to receive(:notify_once).never
-      end
-
-      it "should call project downloader service and do not call create_notification" do
-        project.video_url = 'http://vimeo.com/66698435'
-        project.save!
-      end
-    end
-  end
-
-  describe "#notify_owner_that_project_is_waiting_funds" do
-    let(:user) { create(:user) }
-    let(:project) { create(:project, user: user, goal: 100, online_days: 1, online_date: Time.now - 2.days, state: 'online') }
-
+  describe "#from_approved_to_online" do
     before do
-      create(:contribution, project: project, value: 200, state: 'confirmed')
-      expect(ProjectNotification).to receive(:notify_once).with(
-        :project_in_waiting_funds,
-        project.user,
-        project,
-        {
-          from_email: CatarseSettings[:email_projects]
-        }
-      )
+      project.notify_observers(:from_approved_to_online)
     end
 
-    it("should notify the project owner"){ project.finish }
+    it "should send project_visible notification" do
+      expect(ProjectNotification.where(template_name: 'project_visible', user: project.user, project: project).count).to eq 1
+    end
   end
 
-  describe "save_dates" do
+  describe "#from_in_analysis_to_approved" do
+    before do
+      project.notify_observers(:from_in_analysis_to_approved)
+    end
+
+    it "should send project_visible notification" do
+      expect(ProjectNotification.where(template_name: 'project_approved', user: project.user, project: project).count).to eq 1
+    end
+  end
+
+  describe "#from_online_to_waiting_funds" do
+    before do
+      zendesk_user_atendimento
+      project.notify_observers(:from_online_to_waiting_funds)
+    end
+
+    context "when project has not reached goal" do
+      let(:project) do
+        project = create(:project, state: 'draft', goal: 3000)
+        create(:reward, project: project)
+        project.update_attribute :state, :online
+        allow(project).to receive(:reached_goal?).and_return(false)
+        project
+      end
+
+      it "should not send project_will_succeed notification" do
+        expect(ProjectNotification.where(template_name: 'project_will_succeed', user: zendesk_user_atendimento, project: project).count).to eq 0
+      end
+    end
+
+    context "when project has reached goal" do
+      let(:project) do
+        project = create(:project, state: 'draft', goal: 3000)
+        create(:reward, project: project)
+        project.update_attribute :state, :online
+        allow(project).to receive(:reached_goal?).and_return(true)
+        project
+      end
+
+      it "should send project_will_succeed notification" do
+        expect(ProjectNotification.where(template_name: 'project_will_succeed', user: zendesk_user_atendimento, project: project).count).to eq 1
+      end
+    end
+
+    it "should send project_visible notification" do
+      expect(ProjectNotification.where(template_name: 'project_in_waiting_funds', user: project.user, project: project).count).to eq 1
+    end
+  end
+
+  describe "#from_online_to_failed" do
     let(:project) do
-      project = create(:project, state: 'draft')
-      create(:reward, project: project)
-      project.update_attribute :state, :in_analysis
-      project
-    end
-    context "when project goes from in_analysis to rejected" do
-      before do
-        project.reject
-      end
-      it("should save current date"){expect(project.rejected_at).to_not be_nil}
+      create(:project, {
+        goal: 100,
+        online_date: 3.days.ago,
+        online_days: 30,
+        state: 'online'
+      })
     end
 
-    context "when project goes from in_analysis to draft" do
-      before do
-        project.push_to_draft
-      end
-      it("should save current date"){expect(project.sent_to_draft_at).to_not be_nil}
+    let(:contribution_invalid) do
+      create(:confirmed_contribution, value: 10, project: project)
     end
 
+    let(:contribution_valid) do
+      create(:confirmed_contribution, value: 10, project: project)
+    end
+
+    context "not request refund to invalid bank_account slip payment" do
+      let(:payment_valid) do
+        contribution_valid.payments.first
+      end
+
+      let(:payment_invalid) do
+        p = contribution_invalid.payments.first
+        p.update_column(:payment_method, 'BoletoBancario')
+        p
+      end
+
+      before do
+        Sidekiq::Testing.inline!
+        payment_valid
+        payment_invalid
+        contribution_invalid.user.bank_account.destroy
+        expect(DirectRefundWorker).to receive(:perform_async).with(payment_valid.id)
+        expect(DirectRefundWorker).to_not receive(:perform_async).with(payment_invalid.id)
+        project.update_attribute :online_days, 1
+      end
+
+      it { project.finish }
+    end
   end
 
-  describe "notify_contributors" do
-
-    context "when project is successful" do
-      let(:project){ create(:project, goal: 30, online_days: 1, online_date: Time.now - 8.days, state: 'online') }
-      let(:contribution){ create(:contribution, key: 'should be updated', payment_method: 'should be updated', state: 'confirmed', confirmed_at: Time.now, value: 30, project: project) }
-
-      before do
-        contribution
-        project.update_attributes state: 'waiting_funds'
-        expect(ProjectNotification).to receive(:notify_once).at_least(:once)
-        contribution.save!
-        project.finish!
-      end
-      it("should notify the project contributions"){ subject }
-    end
-
-    context "when project is unsuccessful" do
-      let(:project){ create(:project, goal: 30, online_days: 1, online_date: Time.now - 8.days, state: 'online') }
-      let(:contribution){ create(:contribution, key: 'should be updated', payment_method: 'should be updated', state: 'confirmed', confirmed_at: Time.now, value: 20) }
-      before do
-        contribution
-        project.update_attributes state: 'waiting_funds'
-        expect(ProjectNotification).to receive(:notify_once).at_least(:once)
-        contribution.save!
-        project.finish!
-      end
-      it("should notify the project contributions and owner"){ subject }
-    end
-
-    context "when project is unsuccessful with pending contributions" do
-      let(:project){ create(:project, goal: 30, online_days: 1, online_date: Time.now - 8.days, state: 'online') }
-
-      before do
-        create(:contribution, project: project, key: 'ABC1', payment_method: 'ABC', payment_token: 'ABC', value: 20, state: 'confirmed')
-        create(:contribution, project: project, key: 'ABC2', payment_method: 'ABC', payment_token: 'ABC', value: 20)
-        project.update_attributes state: 'waiting_funds'
-      end
-
-      before do
-        expect(ContributionNotification).to receive(:notify_once).at_least(1)
-        project.finish!
-      end
-      it("should notify the project contributions and owner"){ subject }
-    end
-
-  end
-
-  describe '#notify_owner_that_project_is_successful' do
-    let(:project){ create(:project, goal: 30, online_days: 1, online_date: Time.now - 8.days, state: 'waiting_funds') }
-
+  describe '#from_waiting_funds_to_successful' do
     before do
-      allow(project).to receive(:reached_goal?).and_return(true)
-      allow(project).to receive(:in_time_to_wait?).and_return(false)
-      project.finish
+      admin_user
+      redbooth_user
+      project.notify_observers(:from_waiting_funds_to_successful)
     end
 
-    it "should create notification for project owner" do
-      expect(ProjectNotification.where(user_id: project.user.id, template_name: 'project_success', project_id: project.id).first).not_to be_nil
-    end
-  end
-
-  describe "#notify_owner_that_project_is_online" do
-    let(:project) do
-      project = create(:project, state: 'draft')
-      create(:reward, project: project)
-      project.update_attribute :state, :approved
-      project
-    end
-
-    context "when project don't belong to any channel" do
-      before do
-        project.push_to_online
-      end
-
-      it "should create notification for project owner" do
-        expect(ProjectNotification.where(user_id: project.user.id, template_name: 'project_visible', project_id: project.id).first).not_to be_nil
-      end
-    end
-
-    context "when project belong to a channel" do
-      before do
-        project.channels << channel
-        project.push_to_online
-      end
-
-      it "should create notification for project owner" do
-        expect(ProjectNotification.where(user_id: project.user.id, template_name: 'project_visible_channel', project_id: project.id).first).not_to be_nil
-      end
-    end
-  end
-
-  describe "#notify_admin_that_project_reached_deadline" do
-    let(:project){ create(:project, goal: 30, online_days: 1, online_date: Time.now - 8.days, state: 'waiting_funds') }
-    let(:user) { create(:user, email: 'foo@foo.com')}
-    before do
-      CatarseSettings[:email_payments] = 'foo@foo.com'
-      CatarseSettings[:email_system] = 'foo2@foo.com'
-      user
-      allow(project).to receive(:reached_goal?).and_return(true)
-      allow(project).to receive(:in_time_to_wait?).and_return(false)
-      project.finish
+    it "should send project_visible notification" do
+      expect(ProjectNotification.where(template_name: 'project_success', user: project.user, project: project).count).to eq 1
     end
 
     it "should create notification for admin" do
-      expect(ProjectNotification.where(user_id: user.id, template_name: 'adm_project_deadline', project_id: project.id).first).not_to be_nil
+      expect(ProjectNotification.where(template_name: 'redbooth_task', user: redbooth_user, project_id: project.id).count).not_to be_nil
     end
-
   end
-
-  describe "#notify_admin_that_project_is_successful" do
-    let(:project){ create(:project, goal: 30, online_days: 1, online_date: Time.now - 8.days, state: 'waiting_funds') }
-    let(:user) { create(:user, email: 'foo@foo.com')}
-    before do
-      CatarseSettings[:email_redbooth] = 'foo@foo.com'
-      user
-      allow(project).to receive(:reached_goal?).and_return(true)
-      allow(project).to receive(:in_time_to_wait?).and_return(false)
-      project.finish
-    end
-
-    it "should create notification for admin" do
-      expect(ProjectNotification.where(user_id: user.id, template_name: 'redbooth_task', project_id: project.id).first).not_to be_nil
-    end
-
-  end
-
-  #describe "#request_refund_for_failed_project" do
-  #  let(:project){ create(:project, state: 'online') }
-  #  let(:user){ create(:user) }
-  #  let(:contribution) { create(:contribution, state: 'confirmed', payment_method: 'PayPal', project_id: project.id, user_id: user.id, value: 10, credits: false)}
-  #  before do
-  #    project
-  #    user
-  #    contribution
-  #    project.stub(:should_fail?).and_return(true)
-  #    project.stub(:pending_contributions_reached_the_goal?).and_return(false)
-  #    project.finish
-  #    contribution.reload
-  #  end
-
-  #  it "should change contribution state to requested_refund" do
-  #    expect(contribution.reload.state).to eq 'requested_refund'
-  #  end
-
-  #end
-
 end

@@ -16,22 +16,17 @@ class UserDecorator < Draper::Decorator
     "http://twitter.com/#{source.twitter}" unless source.twitter.blank?
   end
 
-  def gravatar_url
-    return unless source.email
-    "https://gravatar.com/avatar/#{Digest::MD5.new.update(source.email)}.jpg?default=#{CatarseSettings[:base_url]}/assets/user.png"
-  end
-
   def display_name
-    source.name.presence || source.full_name.presence || I18n.t('user.no_name')
+    source.name.presence || I18n.t('user.no_name')
   end
 
   def display_image
-    source.personal_image || '/user.png'
+    source.uploaded_image.thumb_avatar.url || '/assets/catarse_bootstrap/user.jpg'
   end
 
-  def display_image_html options={width: 119, height: 121}
-    (%{<div class="avatar_wrapper" style="width: #{options[:width]}px; height: #{options[:height]}px">} +
-      h.image_tag(display_image, alt: "User", style: "width: #{options[:width]}px; height: auto", class: "#{options[:image_class]}") +
+  def display_image_html
+    (%{<div class="avatar_wrapper">} +
+      h.image_tag(display_image, alt: "User", class: "thumb big u-round") +
       %{</div>}).html_safe
   end
 
@@ -45,6 +40,19 @@ class UserDecorator < Draper::Decorator
 
   def display_credits
     number_to_currency source.credits
+  end
+
+  # Return the total amount from pending refund payments
+  def display_pending_refund_payments_amount
+    number_to_currency(
+      source.pending_refund_payments.sum(&:value) + source.credits,
+      precision: 2)
+  end
+
+  # Return array with name of projects that user
+  # have pending refund payments
+  def display_pending_refund_payments_projects_name
+    source.pending_refund_payments_projects.map(&:name).uniq
   end
 
   def display_bank_account
@@ -64,6 +72,6 @@ class UserDecorator < Draper::Decorator
   end
 
   def display_total_of_contributions
-    number_to_currency source.contributions.with_state('confirmed').sum(:value)
+    number_to_currency source.payments.with_state('paid').sum(:value)
   end
 end

@@ -1,5 +1,12 @@
 pt:
   projects:
+    about_mobile:
+      by: 'por'
+      back: '< Voltar'
+    project_embed:
+      insert: 'Insira um widget em seu site'
+    mobile_video:
+      read_more: "Leia mais"
     metrics:
       titles:
         confirmed_by_day: 'Total de apoios confirmados por dia'
@@ -11,14 +18,15 @@ pt:
       deactive_btn: 'Não quero mais ser lembrado'
     send_to_analysis: Seu projeto foi enviado para nossa equipe.
     send_to_analysis_error: Erro ao enviar projeto para análise. Preencha todos os campos obrigatórios.
-    put_online: Seu projeto está online!
-    put_online_error: Erro ao colocar o projeto online. Preencha todos os campos obrigatórios.
+    push_to_online: Seu projeto está online!
+    push_to_online_error: Erro ao colocar o projeto online. Preencha todos os campos obrigatórios.
     twitter:
       take_a_look: Confira o projeto %{name} no @catarse
     video_embed:
       a_project_by_html: Um projeto de %{link} no
     posts:
       project_post:
+        exclusive: 'Post exclusivo para apoiadores.'
         unavailable: Esta novidade só está disponível para apoiadores.
         contribute: Apoie
         unavailable_contribute: este projeto para visualizá-la.
@@ -46,6 +54,7 @@ pt:
       deactive_btn: ' Lembrete ativo'
     show:
       menu:
+        panel_html: "&nbsp;&nbsp;Painel de controle"
         about: Sobre
         add_reward: Adicionar recompensa
         comments: Comentários
@@ -55,22 +64,20 @@ pt:
         reports: Relatórios
         posts: Novidades
     project_main:
-      twitter_profile: "Perfil no Twitter"
-      facebook_profile: "Perfil no Facebook"
-      author_website: "Site do autor"
+      post_call: 'Toda novidade publicada no Catarse é enviada diretamente para o email de quem já apoiou seu projeto e também fica disponível para visualização no site. Você pode optar por deixá-la pública, ou visível somente para seus apoiadores aqui nesta aba.'
+      send_post: 'Escrever novidade'
       share: "Compartilhe"
       tweet: "Tweet"
-      contact_author: "Enviar mensagem"
       contribute_project:
         display_status:
-          reached_goal: "Este projeto será bem-sucedido e financiado em %{date}"
-          not_reached_goal: "Este projeto só será financiado se pelo menos %{goal} forem atingidos até %{date}"
+          approved: "Esse projeto já foi aprovado pelo Catarse. Em breve ele entrará no ar e estará pronto para receber apoios."
+          online: "Você pode apoiar este projeto até o dia %{date} às 23h59m59s"
           failed: "Este projeto não atingiu o mínimo de %{goal} até %{date} e não foi financiado"
           rejected: "Este projeto não foi aceito. Não é possível realizar um apoio."
           in_analysis: "Este projeto está em análise e ainda não está aberto para receber apoios."
           successful: "Este projeto foi bem-sucedido e foi financiado em %{date}"
-          waiting_funds: "Aguardando a confirmação de boletos para saber se este projeto será financiado."
-          draft: "Esse projeto é apenas um rascunho e ainda não está aberto para receber apoios."
+          waiting_funds: "O prazo de captação desse projeto está encerrado. Estamos aguardando a confirmação dos últimos pagamentos."
+          draft: "Este projeto é apenas um rascunho e ainda não pode receber apoios."
         submit: Apoiar este projeto
       project_by: projeto por
       funding_period: Período de campanha
@@ -91,8 +98,8 @@ pt:
         isso no orçamento. Prometeu?! CUMPRA! :D
       no_rewards_warning_title: Crie aqui suas recompensas
       contribution_states:
-        confirmed: Confirmados
-        pending: Boletos impressos
+        confirmed: "Confirmados"
+        pending: "Pendentes"
       sidebar:
         contributions: apoios
         goal: atingidos de %{total}

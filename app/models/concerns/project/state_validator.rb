@@ -1,58 +1,70 @@
-class Project::StateValidator < ActiveModel::Validator
-  def validate(record)
-    @record = record
-    self.send record.state
-  end
+# -*- coding: utf-8 -*-
+# This module handles with default state validation
+module Project::StateValidator
+  extend ActiveSupport::Concern
 
-  private
-  def online
-    in_analysis
-    approved
-    @record.errors['user.full_name'] << "Razão social do usuário não pode ficar em branco" if user.full_name.blank?
-    @record.errors['user.email'] << "Email do usuário não pode ficar em branco" if user.email.blank?
-    @record.errors['user.cpf'] << "CPF do usuário não pode ficar em branco" if user.cpf.blank?
-    @record.errors['user.address_street'] << "Endereço do usuário não pode ficar em branco" if user.address_street.blank?
-    @record.errors['user.address_number'] << "Número no endereço do usuário não pode ficar em branco" if user.address_number.blank?
-    @record.errors['user.address_city'] << "Cidade do usuário não pode ficar em branco" if user.address_city.blank?
-    @record.errors['user.address_state'] << "Estado do usuário não pode ficar em branco" if user.address_state.blank?
-    @record.errors['user.address_zip_code'] << "CEP do usuário não pode ficar em branco" if user.address_zip_code.blank?
-    @record.errors['user.phone_number'] << "Telefone do usuário não pode ficar em branco" if user.phone_number.blank?
+  included do
 
-    @record.errors['user.bank_account.bank'] << "Banco do usuário não pode ficar em branco" if bank_account.try(:bank).blank?
-    @record.errors['user.bank_account.agency'] << "Agência do usuário não pode ficar em branco" if bank_account.try(:agency).blank?
-    @record.errors['user.bank_account.agency_digit'] << "Dígito agência do usuário não pode ficar em branco" if bank_account.try(:agency_digit).blank?
-    @record.errors['user.bank_account.account'] << "No. da conta do usuário não pode ficar em branco" if bank_account.try(:account).blank?
-    @record.errors['user.bank_account.account_digit'] << "Dígito conta do usuário não pode ficar em branco" if bank_account.try(:account_digit).blank?
-    @record.errors['user.bank_account.owner_name'] << "Nome do titular do usuário não pode ficar em branco" if bank_account.try(:owner_name).blank?
-    @record.errors['user.bank_account.owner_document'] << "CPF / CNPJ do titular do usuário não pode ficar em branco" if bank_account.try(:owner_document).blank?
-  end
+    # All valid states for projects in_analysis to end of publication
+    ON_ANALYSIS_TO_END_STATES = %w(in_analysis approved online successful waiting_funds failed).freeze
 
-  def approved
-    if (@record.goal || 0) >= CatarseSettings[:minimum_goal_for_video].to_i
-      @record.errors.add_on_blank(:video_url)
+    # All valid states for projects approved to end of publication
+    ON_ONLINE_TO_END_STATES = %w(online successful waiting_funds failed).freeze
+
+    # Validation for in_analysis? only state
+    with_options if: :in_analysis? do |wo|
+      wo.validates_presence_of :city
+      wo.validates_length_of :name, maximum: Project::NAME_MAXLENGTH
     end
-  end
 
-  def in_analysis
-    @record.errors.add_on_blank([:about, :headline, :goal, :online_days, :uploaded_image])
-    @record.errors['user.name'] << "Nome do usuário não pode ficar em branco" if user.name.blank?
-    @record.errors['user.bio'] << "Biografia do usuário não pode ficar em branco" if user.bio.blank?
-    @record.errors['user.uploaded_image'] << "Imagem do usuário não pode ficar em branco" if user.personal_image.blank?
-    #@record.errors['rewards.size'] << "Deve haver pelo menos uma recompensa" if @record.rewards.count == 0
-  end
+    # Start validations when project state
+    # is included on ON_ANALYSIS_TO_END_STATE
+    with_options if: -> (x) { ON_ANALYSIS_TO_END_STATES.include? x.state } do |wo| 
+      wo.validates_presence_of :about_html,
+        :headline, :goal, :online_days, :budget
 
-  def draft; end
-  def rejected; end
-  def successful; end
-  def waiting_funds; end
-  def failed; end
-  def deleted; end
+      wo.validates_length_of :name, maximum: Project::NAME_MAXLENGTH
 
-  def user
-    @record.user
-  end
+      wo.validates_presence_of :uploaded_image,
+       unless: ->(project) { project.video_thumbnail.present? }
 
-  def bank_account
-    @record.user.try(:bank_account)
+      wo.validate do
+        [:uploaded_image, :about_html, :name].each do |attr|
+          self.user.errors.add_on_blank(attr)
+        end
+
+        self.user.errors.each do |error, error_message|
+          self.errors.add('user.' + error.to_s, error_message)
+        end
+
+        if self.account && (self.account.agency.try(:size) || 0) < 4
+          self.errors['account.agency_size'] << "Agência deve ter pelo menos 4 dígitos"
+        end
+      end
+    end
+
+    # Start validations when project state
+    # is included on ON_ONLINE_TO_END_STATE
+    with_options if: -> (x) { ON_ONLINE_TO_END_STATES.include? x.state } do |wo| 
+      wo.validates_presence_of :account,
+        message: 'Dados Bancários não podem ficar em branco'
+
+      wo.validate do
+        # NOTE: maybe this validations can be on ProjectAccount
+        [
+          :email, :address_street, :address_number, :address_city,
+          :address_state, :address_zip_code, :phone_number, :bank,
+          :agency, :account, :account_digit, :owner_name, :owner_document
+        ].each do |attr|
+          self.account.errors.add_on_blank(attr) if self.account.present?
+        end
+
+        # only add account errors to project when account already
+        # created, if not no validate (legacy projects).
+        self.account.errors.each do |error, error_message|
+          self.errors.add('project_account.' + error.to_s, error_message)
+        end if self.account.present?
+      end
+    end
   end
 end

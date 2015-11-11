@@ -18,6 +18,11 @@ class ProjectPolicy < ApplicationPolicy
     create?
   end
 
+  def update_account?
+    record.account.invalid? || 
+      ['online', 'waiting_funds', 'successful', 'failed'].exclude?(record.state) || is_admin?
+  end
+
   def send_to_analysis?
     create?
   end
@@ -28,15 +33,17 @@ class ProjectPolicy < ApplicationPolicy
 
   def permitted_attributes
     if user.present? && (user.admin? || (record.draft? || record.rejected? || record.in_analysis?))
-      p_attr = [channel_ids: []]
-      p_attr << record.attribute_names.map(&:to_sym)
+      p_attr = record.attribute_names.map(&:to_sym)
       p_attr << user_attributes
       p_attr << budget_attributes
       p_attr << posts_attributes
+      p_attr << reward_attributes
+      p_attr << account_attributes
 
-      {project: p_attr.flatten}
+      p_attr.flatten
     else
-      {project: [:about, :video_url, :uploaded_image, :headline, :budget, user_attributes, posts_attributes, budget_attributes]}
+      [:about_html, :video_url, :uploaded_image, :headline, :budget,
+                 user_attributes, posts_attributes, budget_attributes, reward_attributes, account_attributes]
     end
   end
 
@@ -55,7 +62,19 @@ class ProjectPolicy < ApplicationPolicy
   end
 
   def posts_attributes
-    { posts_attributes: [:_destroy, :title, :comment, :exclusive, :id]}
+    { posts_attributes: [:_destroy, :title, :comment_html, :exclusive, :id]}
   end
+
+  def reward_attributes
+    { rewards_attributes: [:_destroy, :id, :maximum_contributions,
+                          :description, :deliver_at, :minimum_value] }
+  end
+
+  def account_attributes
+    if done_by_owner_or_admin?
+      { account_attributes: ProjectAccount.attribute_names.map(&:to_sym) }
+    end
+  end
+
 end
 

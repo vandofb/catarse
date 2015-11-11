@@ -9,6 +9,7 @@ module Contribution::StateMachineHandler
       state :canceled, value: 'canceled'
       state :refunded, value: 'refunded'
       state :requested_refund, value: 'requested_refund'
+      state :chargeback, value: 'chargeback'
       state :refunded_and_canceled, value: 'refunded_and_canceled'
       state :deleted, value: 'deleted'
       state :invalid_payment, value: 'invalid_payment'
@@ -56,7 +57,7 @@ module Contribution::StateMachineHandler
 
         to_column = "#{transition.to}_at".to_sym
         if contribution.has_attribute?(to_column)
-          contribution.update_attribute to_column, DateTime.now
+          contribution.update_attribute to_column, DateTime.current
         end
       end
 

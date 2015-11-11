@@ -1,136 +1,78 @@
-desc "This task is called by the Heroku cron add-on"
-task :cron => :environment do
-  Project.to_finish.each do |project|
-    CampaignFinisherWorker.perform_async(project.id)
+namespace :cron do
+  desc "Tasks that should run hourly"
+  task hourly: [:finish_projects, :second_slip_notification,
+                :refresh_materialized_views, :schedule_reminders]
+
+  desc "Tasks that should run daily"
+  task daily: [ :notify_project_owner_about_new_confirmed_contributions,
+               :deliver_projects_of_week, :verify_pagarme_transactions,
+               :verify_pagarme_transfers, :verify_pagarme_user_transfers, :notify_pending_refunds, :request_direct_refund_for_failed_refund]
+
+  desc "Refresh all materialized views"
+  task refresh_materialized_views: :environment do
+    puts "refreshing views"
+    Statistics.refresh_view
+    UserTotal.refresh_view
   end
-end
 
-desc "deliver verify moip account notifications"
-task :deliver_verify_moip_account_notifications do
-  Project.send_verify_moip_account_notification
-end
-
-desc "update paypal contributions without a payment_service_fee"
-task update_payment_service_fee: :environment do
-  ActiveRecord::Base.connection.execute(<<-EOQ)
-    UPDATE contributions SET payment_service_fee = ((regexp_matches(pn.extra_data, 'fee_amount":"(\d*\.\d*)"'))[1])::numeric from payment_notifications pn where contributions.id = pn.contribution_id AND contributions.payment_service_fee is null and contributions.payment_method = 'PayPal' and contributions.state = 'confirmed' and pn.extra_data ~* 'fee_amount';
-  EOQ
-end
-
-desc "This tasks should be executed 1x per day"
-task notify_project_owner_about_new_confirmed_contributions: :environment do
-  Project.with_contributions_confirmed_today.each do |project|
-    project.notify_owner(
-      :project_owner_contribution_confirmed
-    )
-  end
-end
-
-desc "Move to deleted state all contributions that are in pending a lot of time"
-task :move_pending_contributions_to_trash => [:environment] do
-  Contribution.where("state in('pending') and created_at + interval '6 days' < current_timestamp").update_all({state: 'deleted'})
-end
-
-desc "Cancel all waiting_confirmation contributions that is passed 4 weekdays"
-task :cancel_expired_waiting_confirmation_contributions => :environment do
-  Contribution.can_cancel.update_all(state: 'canceled')
-end
-
-desc "Send notification about credits 1 month after the project failed"
-task send_credits_notification: :environment do
-  notification = UserNotification.where(template_name: 'credits_warning').last
-  if notification && (Time.now - notification.created_at) > 30.days
-    User.has_not_used_credits_last_month.find_each do |user|
-      user.send_credits_notification
-    end
-  end
-end
-
-desc "Create first versions for rewards"
-task :index_rewards_versions => :environment do
-  Reward.all.each do |reward|
-    unless reward.versions.count > 0
-      puts "update! #{reward.id}"
-      reward.update_attributes(reindex_versions: DateTime.now)
-    end
-  end
-end
-
-desc "Update video_embed_url column"
-task :fill_embed_url => :environment do
-  Project.where('video_url is not null and video_embed_url is null').each do |project|
-    project.update_video_embed_url
-    project.save
-  end
-end
-
-desc "Migrate project thumbnails to new format"
-task :migrate_project_thumbnails => :environment do
-  p1 = Project.where('uploaded_image is not null').all
-  p2 = Project.where('image_url is not null').all - p1
-  p3 = Project.where('video_url is not null').all - p1 - p2
-
-  p1.each do |project|
-    begin
-      project.uploaded_image.recreate_versions! if project.uploaded_image.file.present?
-      puts "Recreating versions: #{project.id} - #{project.name}"
-    rescue Exception => e
-      puts "Original image not found"
+  desc 'Request refund for failed credit card refunds'
+  task request_direct_refund_for_failed_refund: :environment do
+    ContributionDetail.where("state in ('pending', 'paid') and project_state = 'failed' and lower(gateway) = 'pagarme' and lower(payment_method) = 'cartaodecredito'").each do |c|
+      c.direct_refund
+      puts "request refund for gateway_id -> #{c.gateway_id}"
     end
   end
 
-  p2.each do |project|
-    begin
-      project.uploaded_image = open(project.image_url)
-      puts "Downloading thumbnail: #{project.id} - #{project.name}"
-      project.save!
-    rescue Exception => e
-      puts "Couldn't read #{project.image_url} on project #{project.id}, downloading thumbnail from video..."
-      project.download_video_thumbnail
-      project.save! if project.valid?
+  desc 'Add missing reminder jobs'
+  task schedule_reminders: :environment do
+    ProjectNotification.where("template_name = 'reminder' and sent_at is null and deliver_at >= now()").find_each do |notification|
+      has_on_queue = notification.project.exists_on_scheduled_jobs('UserNotifier::EmailWorker', ['ProjectNotification', notification.id])
+      puts "#{notification.user.name} ==> #{has_on_queue} => #{notification.to_json}"
+      notification.deliver unless has_on_queue
     end
   end
 
-  p3.each do |project|
-    begin
-      project.download_video_thumbnail
-      puts "Downloading thumbnail from video: #{project.id} - #{project.name}"
-      project.save!
-    rescue Exception => e
-      puts "Couldn't read: #{project.video_url}"
+  desc "Send second slip notification"
+  task second_slip_notification: :environment do
+    puts "sending second slip notification"
+    ContributionDetail.slips_past_waiting.no_confirmed_contributions_on_project.each do |contribution_detail|
+      contribution_detail.contribution.notify_to_contributor(:contribution_canceled_slip)
     end
   end
 
-end
+  desc "Finish all expired projects"
+  task finish_projects: :environment do
+    puts "Finishing projects..."
+    Project.to_finish.each do |project|
+      CampaignFinisherWorker.perform_async(project.id)
+    end
+  end
 
-desc "Deliver a collection of recents projects of a category"
-task deliver_projects_of_week: :environment do
-  if Time.now.in_time_zone(Time.zone.tzinfo.name).monday?
+  desc "Send a notification to all project owners with contributions done..."
+  task notify_project_owner_about_new_confirmed_contributions: :environment do
+    puts "Notifying project owners about contributions..."
+    Project.in_funding.with_contributions_confirmed_last_day.each do |project|
+      # We cannot use notify_owner for it's a notify_once and we need a notify
+      project.notify(
+        :project_owner_contribution_confirmed,
+        project.user
+      )
+    end
+  end
+
+  desc 'Send a notification about pending refunds'
+  task notify_pending_refunds: [:environment] do
+    Contribution.need_notify_about_pending_refund.each do |contribution|
+     contribution.notify(:contribution_project_unsuccessful_slip_no_account,
+                         contribution.user) unless contribution.user.bank_account.present?
+    end
+  end
+
+  desc "Deliver a collection of recents projects of a category"
+  task deliver_projects_of_week: :environment do
+    puts "Delivering projects of the week..."
     Category.with_projects_on_this_week.each do |category|
       category.deliver_projects_of_week_notification
     end
-  end
-end
-
-desc "Deliver credits waning for users that have credits less than R$ 10"
-task :deliver_credits_less_10, [:percent] => :environment do |t, args|
-  total_percent = (args.percent.to_f/100.0)
-  collection = User.already_used_credits.where("user_totals.credits < 10")
-  limit = (args.percent.present? ? (collection.count * total_percent).to_i : nil)
-
-  collection.limit(limit).each do |user|
-    user.notify(:credits_warning_less_group)
-  end
-end
-
-desc "Deliver credits waning for users that have credits more than R$ 10"
-task :deliver_credits_more_than_10, [:percent] => :environment do |t, args|
-  total_percent = (args.percent.to_f/100.0)
-  collection = User.already_used_credits.where("user_totals.credits >= 10")
-
-  limit = (args.percent.present? ? (collection.count * total_percent).to_i : nil)
-
-  collection.limit(limit).each do |user|
-    user.notify(:credits_warning_more_group)
   end
 end

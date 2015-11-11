@@ -1,29 +1,38 @@
 # coding: utf-8
 class ApplicationController < ActionController::Base
   include Concerns::ExceptionHandler
-  include Concerns::MenuHandler
   include Concerns::SocialHelpersHandler
   include Concerns::AnalyticsHelpersHandler
   include Pundit
+  if Rails.env.production?
+    require "new_relic/agent/instrumentation/rails3/action_controller"
+    include NewRelic::Agent::Instrumentation::ControllerInstrumentation
+    include NewRelic::Agent::Instrumentation::Rails3::ActionController
+  end
 
-  layout :use_catarse_boostrap
+  acts_as_token_authentication_handler_for User, fallback: :none
+  layout 'catarse_bootstrap'
   protect_from_forgery
 
-  before_filter :redirect_user_back_after_login, unless: :devise_controller?
   before_filter :configure_permitted_parameters, if: :devise_controller?
 
-  helper_method :channel, :namespace, :referal_link, :render_projects, :should_show_beta_banner?, :render_feeds
+  helper_method :referral_link, :render_projects, :should_show_beta_banner?,
+    :render_feeds, :can_display_pending_refund_alert?
 
   before_filter :set_locale
 
-  before_action :referal_it!
+  before_action :force_www
 
-  def channel
-    Channel.find_by_permalink(request.subdomain.to_s)
+  def referral_link
+    session[:referral_link]
   end
 
-  def referal_link
-    session[:referal_link]
+  def can_display_pending_refund_alert?
+    @can_display_alert ||= (current_user && 
+                                                                                (current_user.pending_refund_payments.present? || (current_user.credits > 0 && !current_user.has_pending_legacy_refund?)) &&
+                            controller_name.to_sym != :bank_accounts &&
+                            controller_name.to_sym != :donations &&
+                            action_name.to_sym != :no_account_refund )
   end
 
   def render_projects collection, ref, locals = {}
@@ -42,48 +51,38 @@ class ApplicationController < ActionController::Base
     current_user.nil? || current_user.projects.empty?
   end
 
-  private
-  def referal_it!
-    session[:referal_link] ||= params[:ref] if params[:ref].present?
+  def referral_it!
+    if request.env["HTTP_REFERER"] =~ /catarse\.me/
+      # For local referrers we only want to store the first ref parameter
+      session[:referral_link] ||= params[:ref]
+    else
+      # For external referrers should always overwrite referral_link
+      session[:referral_link] = params[:ref] || request.env["HTTP_REFERER"]
+    end
   end
 
-  def detect_mobile_browsers
-    return redirect_to url_for(host: 'beta.catarse.me') if browser.mobile? && should_show_beta_banner?
+  private
+  def force_www
+    if request.subdomain.blank? && Rails.env.production?
+      return redirect_to url_for(params.merge(subdomain: 'www'))
+    end
   end
 
   def detect_old_browsers
     return redirect_to page_path("bad_browser") if (!browser.modern? || browser.ie9?) && controller_name != 'pages'
   end
 
-  def namespace
-    names = self.class.to_s.split('::')
-    return "null" if names.length < 2
-    names[0..(names.length-2)].map(&:downcase).join('_')
-  end
-
   def set_locale
-    if params[:locale]
-      I18n.locale = params[:locale]
-      current_user.try(:change_locale, params[:locale])
-    elsif request.method == "GET"
-      new_locale = current_user.try(:locale) || I18n.default_locale
-      redirect_to url_for(params.merge(locale: new_locale, only_path: true))
-    end
+    return redirect_to url_for(locale: I18n.default_locale, only_path: true) unless is_locale_available?
+    I18n.locale = params[:locale] || I18n.default_locale
   end
 
-  def use_catarse_boostrap
-    devise_controller? ? 'catarse_bootstrap' : 'application'
-  end
-
-  def redirect_back_or_default(default)
-    redirect_to(session[:return_to] || default)
-    session[:return_to] = nil
+  def is_locale_available?
+    params[:locale].blank? || I18n.available_locales.include?(params[:locale].to_sym)
   end
 
   def after_sign_in_path_for(resource_or_scope)
-    return_to = session[:return_to]
-    session[:return_to] = nil
-    (return_to || root_path)
+    (session.delete(:return_to) || root_path)
   end
 
   def redirect_user_back_after_login

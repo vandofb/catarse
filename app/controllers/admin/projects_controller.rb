@@ -1,7 +1,7 @@
 class Admin::ProjectsController < Admin::BaseController
   layout 'catarse_bootstrap'
 
-  has_scope :by_user_email, :by_id, :pg_search, :user_name_contains, :with_state, :by_category_id, :order_by, :by_channel, :with_payment_engine
+  has_scope :by_user_email, :by_id, :pg_search, :user_name_contains, :with_state, :by_category_id, :order_by
   has_scope :between_created_at, :between_expires_at, :between_online_date, :between_updated_at, :goal_between, using: [ :start_at, :ends_at ]
 
   before_filter do
@@ -25,9 +25,18 @@ class Admin::ProjectsController < Admin::BaseController
     redirect_to admin_projects_path
   end
 
+  def update
+    resource.update_attributes(permitted_params)
+    super
+  end
+
   protected
+  def permitted_params
+    params.require(:project).permit(resource.attribute_names.map(&:to_sym))
+  end
+
   def collection
-    @scoped_projects = apply_scopes(end_of_association_chain).with_project_totals.without_state('deleted')
+    @scoped_projects = apply_scopes(Project).without_state('deleted')
     @projects = @scoped_projects.page(params[:page])
   end
 end

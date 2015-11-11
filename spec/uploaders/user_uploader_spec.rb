@@ -12,12 +12,16 @@ RSpec.describe UserUploader do
 
   after do
     UserUploader.enable_processing = false
-    @uploader.remove!
   end
 
   describe '#thumb_avatar' do
     subject{ @uploader.thumb_avatar }
     it{ is_expected.to have_dimensions(119, 121) }
+  end
+
+  describe '#thumb_facebook' do
+    subject{ @uploader.thumb_facebook }
+    it{ is_expected.to have_dimensions(512, 400) }
   end
 
 end

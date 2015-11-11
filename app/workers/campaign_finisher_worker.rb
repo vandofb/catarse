@@ -1,10 +1,13 @@
-class CampaignFinisherWorker
+class CampaignFinisherWorker < ProjectBaseWorker
   include Sidekiq::Worker
   sidekiq_options retry: false
 
-  def perform project_id
-    resource = Project.find project_id
-    Rails.logger.info "[FINISHING PROJECT #{resource.id}] #{resource.name}"
-    resource.finish
+  def perform id
+    resource(id).payments.where('gateway_id IS NOT NULL').with_states(%w(paid pending pending_refund)).find_each(batch_size: 100) do |payment|
+      payment.pagarme_delegator.update_transaction
+      payment.change_status_from_transaction
+    end
+
+    resource(id).finish
   end
 end

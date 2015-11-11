@@ -5,73 +5,106 @@ RSpec.describe UserDecorator do
     I18n.locale = :pt
   end
 
+  describe "#display_pending_refund_payments_projects_name" do
+    let(:user){ create(:user, bank_account: nil) }
+    let(:failed_project) { create(:project, goal: 1000, state: 'online', name: 'Foo')}
+    let(:failed_project_2) { create(:project, goal: 1000, state: 'online', name: 'Bar')}
+    let(:payment) {
+      p = create(:confirmed_contribution, {
+        value: 25.45,
+        project: failed_project,
+        user: user
+      }).payments.first
+      p.update_attribute(:payment_method, 'BoletoBancario')
+      p
+    }
+    let(:payment_2) {
+      p = create(:confirmed_contribution, {
+        value: 25.45,
+        project: failed_project_2,
+        user: user
+      }).payments.first
+      p.update_attribute(:payment_method, 'BoletoBancario')
+      p
+    }
+
+    subject { user.decorator.display_pending_refund_payments_projects_name.sort }
+
+    before do
+      payment
+      payment_2
+      failed_project.update_column(:state, 'failed')
+      failed_project_2.update_column(:state, 'failed')
+    end
+
+    it { is_expected.to eq([failed_project_2.name, failed_project.name]) }
+
+  end
+
+  describe "#display_pending_refund_payments_amount" do
+    let(:user){ create(:user, bank_account: nil) }
+    let(:failed_project) { create(:project, goal: 1000, state: 'online')}
+    let(:payment) {
+      p = create(:confirmed_contribution, {
+        value: 25.45,
+        project: failed_project,
+        user: user
+      }).payments.first
+      p.update_attribute(:payment_method, 'BoletoBancario')
+      p
+    }
+
+    subject { user.decorator.display_pending_refund_payments_amount }
+
+    before do
+      payment
+      failed_project.update_column(:state, 'failed')
+    end
+
+    it { is_expected.to eq("R$ 25,45") }
+  end
+
   describe "#display_name" do
     subject{ user.display_name }
-
-    context "when we only have a full name" do
-      let(:user){ create(:user, name: nil, full_name: "Full Name") }
-      it{ is_expected.to eq('Full Name') }
-    end
 
     context "when we have only a name" do
       let(:user){ create(:user, name: 'name') }
       it{ is_expected.to eq('name') }
     end
 
-    context "when name is empty string" do
-      let(:user){ create(:user, name: '', full_name: 'foo') }
-      it{ is_expected.to eq('foo') }
-    end
-
-    context "when we have a name and a full name" do
-      let(:user){ create(:user, name: 'name', full_name: 'full name') }
-      it{ is_expected.to eq('name') }
-    end
-
     context "when we have no name" do
-      let(:user){ create(:user, name: nil, full_name: nil) }
+      let(:user){ create(:user, name: nil) }
       it{ is_expected.to eq(I18n.t('user.no_name')) }
     end
   end
 
   describe "#display_image_html" do
-    let(:user){ build(:user, image_url: 'http://image.jpg', uploaded_image: nil )}
+    let(:user){ build(:user, uploaded_image: nil )}
     let(:options){ {width: 300, height: 300} }
-    subject{ user.display_image_html(options) }
-    it{ is_expected.to eq("<div class=\"avatar_wrapper\" style=\"width: #{options[:width]}px; height: #{options[:height]}px\"><img alt=\"User\" class=\"\" src=\"#{user.display_image}\" style=\"width: #{options[:width]}px; height: auto\" /></div>") }
+    subject{ user.display_image_html }
+    it{ is_expected.to eq("<div class=\"avatar_wrapper\"><img alt=\"User\" class=\"thumb big u-round\" src=\"#{user.display_image}\" /></div>") }
   end
 
   describe "#display_image" do
     subject{ user.display_image }
 
-    context "when we have an uploaded image" do
-      let(:user){ build(:user, uploaded_image: 'image.png' )}
-      before do
-        image = double(url: 'image.png')
-        allow(image).to receive(:thumb_avatar).and_return(image)
-        allow(user).to receive(:uploaded_image).and_return(image)
-      end
-      it{ is_expected.to eq('image.png') }
+    let(:user){ build(:user, uploaded_image: 'image.png' )}
+    before do
+      image = double(url: 'image.png')
+      allow(image).to receive(:thumb_avatar).and_return(image)
+      allow(user).to receive(:uploaded_image).and_return(image)
     end
+    it{ is_expected.to eq('image.png') }
 
-    context "when we have an image url" do
-      let(:user){ build(:user, image_url: 'image.png', uploaded_image: nil) }
-      it{ is_expected.to eq('image.png') }
     end
-
-    context "when we have an email" do
-      let(:user){ create(:user, image_url: nil, email: 'diogob@gmail.com', uploaded_image: nil) }
-      it{ is_expected.to eq("https://gravatar.com/avatar/5e2a237dafbc45f79428fdda9c5024b1.jpg?default=#{CatarseSettings[:base_url]}/assets/user.png") }
-    end
-  end
 
   describe "#short_name" do
-    subject { user = create(:user, name: 'My Name Is Lorem Ipsum Dolor Sit Amet') }
+    subject { create(:user, name: 'My Name Is Lorem Ipsum Dolor Sit Amet') }
     its(:short_name) { should == 'My Name Is Lorem ...' }
   end
 
   describe "#medium_name" do
-    subject { user = create(:user, name: 'My Name Is Lorem Ipsum Dolor Sit Amet And This Is a Bit Name I Think') }
+    subject { create(:user, name: 'My Name Is Lorem Ipsum Dolor Sit Amet And This Is a Bit Name I Think') }
     its(:medium_name) { should == 'My Name Is Lorem Ipsum Dolor Sit Amet A...' }
   end
 
@@ -81,10 +114,10 @@ RSpec.describe UserDecorator do
   end
 
   describe "#display_total_of_contributions" do
-    subject { user = create(:user) }
+    subject { create(:user) }
     context "with confirmed contributions" do
       before do
-        create(:contribution, state: 'confirmed', user: subject, value: 500.0)
+        create(:confirmed_contribution, user: subject, value: 500.0)
       end
       its(:display_total_of_contributions) { should == 'R$ 500'}
     end

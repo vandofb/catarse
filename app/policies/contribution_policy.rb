@@ -5,11 +5,15 @@ class ContributionPolicy < ApplicationPolicy
       if current_user.try(:admin?)
         scope.available_to_display
       elsif current_user == user
-        scope.with_state('confirmed')
+        scope.where('contributions.is_confirmed')
       else
-        scope.not_anonymous.with_state('confirmed')
+        scope.not_anonymous.where('contributions.is_confirmed')
       end
     end
+  end
+
+  def new?
+    record.project.online?
   end
 
   def create?
@@ -17,6 +21,18 @@ class ContributionPolicy < ApplicationPolicy
   end
 
   def update?
+    done_by_owner_or_admin?
+  end
+
+  def second_slip?
+    done_by_owner_or_admin?
+  end
+
+  def no_account_refund?
+    done_by_owner_or_admin?
+  end
+
+  def toggle_anonymous?
     done_by_owner_or_admin?
   end
 
@@ -33,7 +49,7 @@ class ContributionPolicy < ApplicationPolicy
   end
 
   def permitted_attributes
-    {contribution: record.attribute_names.map(&:to_sym) - %i[user_attributes user_id user payment_service_fee payment_id]}
+    record.attribute_names.map(&:to_sym) - %i[user_attributes user_id user payment_service_fee payment_id]
   end
 end
 

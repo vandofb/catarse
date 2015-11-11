@@ -3,93 +3,79 @@ require 'rails_helper'
 RSpec.describe Admin::ContributionsController, type: :controller do
   subject{ response }
   let(:admin) { create(:user, admin: true) }
-  let(:unconfirmed_contribution) { create(:contribution) }
+  let(:payment) { contribution.payments.first }
+  let(:contribution) { create(:pending_contribution) }
   let(:current_user){ admin }
 
   before do
     allow(controller).to receive(:current_user).and_return(current_user)
   end
 
-  describe 'PUT confirm' do
-    let(:contribution) { create(:contribution) }
-    subject { contribution.confirmed? }
+  describe 'PUT gateway_refund' do
+    let(:payment) { create(:payment, state: 'paid') }
 
     before do
-      put :confirm, id: contribution.id, locale: :pt
+      expect(DirectRefundWorker).to receive(:perform_async).with(payment.id)
+      put :gateway_refund, id: payment.id, locale: :pt
+    end
+
+    it "should call direct refund on payment pagarme_delegator" do
+      is_expected.to redirect_to admin_contributions_path
+    end
+  end
+
+  describe 'PUT pay' do
+    subject { payment.paid? }
+
+    before do
+      put :pay, id: payment.id, locale: :pt
     end
 
     it do
-      contribution.reload
+      payment.reload
       is_expected.to eq(true)
     end
   end
 
-  describe 'PUT push_to_trash' do
-    let(:contribution) { create(:contribution, state: 'pending') }
-    subject { contribution.deleted? }
-
-    before do
-      put :push_to_trash, id: contribution.id, locale: :pt
-      contribution.reload
-    end
-
-    it { is_expected.to eq(true) }
-  end
-
-  describe 'PUT hide' do
-    let(:contribution) { create(:contribution, state: 'confirmed') }
-    subject { contribution.refunded_and_canceled? }
-
+  describe 'PUT trash' do
     before do
       allow(controller).to receive(:current_user).and_return(admin)
-      put :hide, id: contribution.id, locale: :pt
+      put :trash, id: payment.id, locale: :pt
+      payment.reload
     end
 
-    it do
-      contribution.reload
-      is_expected.to eq(true)
+    it "should delete the contribution and redirect back" do
+      expect(payment.deleted?).to be(true)
+      is_expected.to be_redirect
     end
   end
 
   describe 'PUT refund' do
-    let(:contribution) { create(:contribution, state: 'confirmed') }
-    subject { contribution.refunded? }
+    let(:contribution) { create(:confirmed_contribution) }
 
     before do
-      put :refund, id: contribution.id, locale: :pt
+      put :refund, id: payment.id, locale: :pt
+      payment.reload
     end
 
-    it do
-      contribution.reload
-      is_expected.to eq(true)
+    it "should refund the contribution and redirect back" do
+      expect(payment.refunded?).to eq(true)
+      is_expected.to be_redirect
     end
   end
 
-  describe 'PUT pendent' do
-    let(:contribution) { create(:contribution, state: 'confirmed') }
-    subject { contribution.confirmed? }
+  describe 'PUT request_refund' do
+    let(:contribution) { create(:confirmed_contribution) }
 
     before do
-      put :pendent, id: contribution.id, locale: :pt
+      allow(payment).to receive(:direct_refund).and_return(true)
+      put :request_refund, id: payment.id, locale: :pt
+      payment.reload
     end
 
-    it do
-      contribution.reload
-      is_expected.to eq(false)
-    end
-  end
-
-  describe 'PUT cancel' do
-    let(:contribution) { create(:contribution, state: 'confirmed') }
-    subject { contribution.canceled? }
-
-    before do
-      put :cancel, id: contribution.id, locale: :pt
-    end
-
-    it do
-      contribution.reload
-      is_expected.to eq(true)
+    it "should request_refund on contribution and redirect back" do
+      expect(payment.pending_refund?).to eq(true)
+      is_expected.to be_redirect
     end
   end
 
@@ -111,17 +97,19 @@ RSpec.describe Admin::ContributionsController, type: :controller do
   end
 
   describe '.collection' do
-    let(:contribution) { create(:contribution, payer_email: 'foo@foo.com') }
+    let(:contribution) { create(:confirmed_contribution, payer_email: 'foo@foo.com') }
     context "when there is a match" do
       before do
-        get :index, locale: :pt, payer_email_contains: 'foo@foo.com'
+        contribution
+        get :index, locale: :pt, user_email_contains: 'foo@foo.com'
       end
-      it{ expect(assigns(:contributions)).to eq([contribution]) }
+      it{ expect(assigns(:contributions).count).to eq(1) }
     end
 
     context "when there is no match" do
       before do
-        get :index, locale: :pt, payer_email_contains: '2foo@foo.com'
+        contribution
+        get :index, locale: :pt, user_email_contains: '2foo@foo.com'
       end
       it{ expect(assigns(:contributions)).to eq([]) }
     end

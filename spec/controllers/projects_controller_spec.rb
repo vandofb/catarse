@@ -22,7 +22,7 @@ RSpec.describe ProjectsController, type: :controller do
 
     context "when user is logged in" do
       let(:current_user){ create(:user) }
-      it{ is_expected.to redirect_to edit_project_path(Project.last, anchor: 'home') }
+      it{ is_expected.to redirect_to insights_project_path(Project.last) }
     end
   end
 
@@ -52,7 +52,7 @@ RSpec.describe ProjectsController, type: :controller do
   describe "GET send_to_analysis" do
     let(:current_user){ project.user }
 
-    context "without referal link" do
+    context "without referral link" do
       before do
         create(:reward, project: project)
         get :send_to_analysis, id: project.id, locale: :pt
@@ -62,15 +62,15 @@ RSpec.describe ProjectsController, type: :controller do
       it { expect(project.in_analysis?).to eq(true) }
     end
 
-    context "with referal link" do
-      subject { project.referal_link }
+    context "with referral link" do
+      subject { project.referral_link }
       before do
         create(:reward, project: project)
-        get :send_to_analysis, id: project.id, locale: :pt, ref: 'referal'
+        get :send_to_analysis, id: project.id, locale: :pt, ref: 'referral'
         project.reload
       end
 
-      it { is_expected.to eq('referal') }
+      it { is_expected.to eq('referral') }
     end
   end
 
@@ -80,14 +80,14 @@ RSpec.describe ProjectsController, type: :controller do
     end
     it { is_expected.to be_success }
 
-    context "with referal link" do
-      subject { controller.session[:referal_link] }
+    context "with referral link" do
+      subject { controller.session[:referral_link] }
 
       before do
-        get :index, locale: :pt, ref: 'referal'
+        get :index, locale: :pt, ref: 'referral'
       end
 
-      it { is_expected.to eq('referal') }
+      it { is_expected.to eq('referral') }
     end
   end
 
@@ -149,19 +149,19 @@ RSpec.describe ProjectsController, type: :controller do
           allow(controller).to receive(:current_user).and_return(project.user)
         end
 
-        context "when I try to update the project name and the about field" do
-          before{ put :update, id: project.id, project: { name: 'new_title', about: 'new_description' }, locale: :pt }
+        context "when I try to update the project name and the about_html field" do
+          before{ put :update, id: project.id, project: { name: 'new_title', about_html: 'new_description' }, locale: :pt }
           it "should not update title" do
             project.reload
             expect(project.name).not_to eq('new_title')
           end
         end
 
-        context "when I try to update only the about field" do
-          before{ put :update, id: project.id, project: { about: 'new_description' }, locale: :pt }
+        context "when I try to update only the about_html field" do
+          before{ put :update, id: project.id, project: { about_html: 'new_description' }, locale: :pt }
           it "should update it" do
             project.reload
-            expect(project.about).to eq('new_description')
+            expect(project.about_html).to eq('new_description')
           end
         end
       end
@@ -181,13 +181,6 @@ RSpec.describe ProjectsController, type: :controller do
   describe "GET embed" do
     before do
       get :embed, id: project, locale: :pt
-    end
-    its(:status){ should == 200 }
-  end
-
-  describe "GET embed_panel" do
-    before do
-      get :embed_panel, id: project, locale: :pt
     end
     its(:status){ should == 200 }
   end

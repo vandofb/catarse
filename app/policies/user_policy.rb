@@ -11,6 +11,10 @@ class UserPolicy < ApplicationPolicy
     done_by_owner_or_admin?
   end
 
+  def billing?
+    done_by_owner_or_admin?
+  end
+
   def edit?
     done_by_owner_or_admin?
   end
@@ -27,8 +31,12 @@ class UserPolicy < ApplicationPolicy
     done_by_owner_or_admin?
   end
 
+  def new_password?
+    done_by_owner_or_admin?
+  end
+
   def permitted_attributes
-    u_attrs = [:current_password, :password, bank_account_attributes: [:bank_id, :name, :agency, :account, :owner_name, :owner_document, :account_digit, :agency_digit] ]
+    u_attrs = [:current_password, :password, :subscribed_to_project_post, bank_account_attributes: [:bank_id, :name, :agency, :account, :owner_name, :owner_document, :account_digit, :agency_digit] ]
     u_attrs << { category_follower_ids: [] }
     u_attrs << record.attribute_names.map(&:to_sym)
     u_attrs << { links_attributes: [:id, :_destroy, :link] }
@@ -37,9 +45,10 @@ class UserPolicy < ApplicationPolicy
 
     unless user.try(:admin?)
       u_attrs.delete(:zero_credits)
+      u_attrs.delete(:permalink)
     end
 
-    { user: u_attrs.flatten }
+    u_attrs.flatten
   end
 
   protected

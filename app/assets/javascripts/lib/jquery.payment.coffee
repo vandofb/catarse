@@ -45,6 +45,14 @@ cards = [
   }
   # Credit cards
   {
+      type: 'elo'
+      pattern: /^636[2-3]|5090[4-6]|504175|45763[1-2]|451416|5067|4576|4011/
+      format: defaultFormat
+      length: [16]
+      cvcLength: [3]
+      luhn: true
+  }
+  {
       type: 'visa'
       pattern: /^4/
       format: defaultFormat
@@ -53,7 +61,7 @@ cards = [
       luhn: true
   }
   {
-      type: 'mastercard'
+      type: 'master'
       pattern: /^5[0-5]/
       format: defaultFormat
       length: [16]
@@ -69,7 +77,7 @@ cards = [
       luhn: true
   }
   {
-      type: 'dinersclub'
+      type: 'diners'
       pattern: /^3[0689]/
       format: defaultFormat
       length: [14]

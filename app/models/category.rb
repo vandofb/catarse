@@ -4,6 +4,9 @@ class Category < ActiveRecord::Base
   has_many :category_followers
   has_many :users, through: :category_followers
 
+  delegate :display_name, to: :decorator
+
+
   validates_presence_of :name_pt
   validates_uniqueness_of :name_pt
 
@@ -24,7 +27,7 @@ class Category < ActiveRecord::Base
   end
 
   def total_online_projects
-    self.projects.with_state('online').count
+    @total_online_projects ||= self.projects.with_state('online').count
   end
 
   def deliver_projects_of_week_notification
@@ -32,4 +35,9 @@ class Category < ActiveRecord::Base
       self.notify(:categorized_projects_of_the_week, user, self)
     end
   end
+
+  def decorator
+    @decorator ||= CategoryDecorator.new(self)
+  end
+
 end

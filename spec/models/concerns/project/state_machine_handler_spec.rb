@@ -1,7 +1,7 @@
 require 'rails_helper'
 
 RSpec.describe Project::StateMachineHandler, type: :model do
-  let(:user){ create(:user, full_name: 'Lorem Ipsum', cpf: '99999999999', phone_number: '99999999', moip_login: 'foobar', bio: 'bio', uploaded_image: File.open("#{Rails.root}/spec/support/testimg.png"), name: 'name' ) }
+  let(:user){ create(:user, cpf: '99999999999', phone_number: '99999999', moip_login: 'foobar', uploaded_image: File.open("#{Rails.root}/spec/support/testimg.png"), name: 'name' ) }
 
   describe "state machine" do
     let(:project) do 
@@ -59,6 +59,10 @@ RSpec.describe Project::StateMachineHandler, type: :model do
         let(:project_state){ 'rejected' }
         subject{ project.push_to_draft }
         it{ should eq(true) }
+        it "should mark sent_to_draft_at" do
+          subject
+          expect(project.sent_to_draft_at).to_not be_nil
+        end
       end
     end
 
@@ -70,6 +74,10 @@ RSpec.describe Project::StateMachineHandler, type: :model do
         end
         subject{ project.reject }
         it{ should eq(true) }
+        it "should mark rejected_at" do
+          subject
+          expect(project.rejected_at).to_not be_nil
+        end
       end
     end
 
@@ -117,18 +125,6 @@ RSpec.describe Project::StateMachineHandler, type: :model do
 
       subject{ project.push_to_online }
 
-      context "when project user has no email" do
-        before do
-          project.user.update_attribute :email, nil
-        end
-
-        it "should raise an error" do
-          subject
-          expect(project.errors).to_not be_nil
-        end
-
-      end
-
       context "when project is approved" do
         before do
           expect(project).to receive(:notify_observers).with(:from_approved_to_online).and_call_original
@@ -146,7 +142,7 @@ RSpec.describe Project::StateMachineHandler, type: :model do
     end
 
     describe '#finish' do
-      let(:project) { create(:project, goal: 30_000, online_days: 1, online_date: Time.now - 2.days, state: project_state) }
+      let(:project) { create(:project, goal: 30_000, online_days: 60, online_date: Time.now - 2.days, state: project_state) }
       subject { project.finish }
       let(:project_state){ 'online' }
 
@@ -157,8 +153,9 @@ RSpec.describe Project::StateMachineHandler, type: :model do
 
       context 'when project is expired and the sum of the pending contributions and confirmed contributions dont reached the goal' do
         before do
-          create(:contribution, value: 100, project: project, created_at: 2.days.ago, payment_choice: 'BoletoBancario')
-          create(:contribution, value: 100, project: project, state: 'waiting_confirmation')
+          create(:confirmed_contribution, value: 100, project: project, created_at: 2.days.ago)
+          create(:pending_contribution, value: 100, project: project)
+          project.update_attribute :online_days, 1
         end
 
         it{ is_expected.to eq true }
@@ -169,16 +166,26 @@ RSpec.describe Project::StateMachineHandler, type: :model do
         end
       end
 
-      context 'when project is expired and have recent contributions without confirmation' do
+      context "with pending contributions" do
         before do
-          create(:contribution, value: 30_000, project: project, state: 'waiting_confirmation')
+          create(:pending_contribution, value: 30_000, project: project)
+          project.update_attribute :online_days, 1
+          subject
         end
 
-        it{ is_expected.to eq true }
+        context "and is not flexible project" do
+          before do
+            create(:flexible_project, project: project)
+          end
 
-        it "should go to waiting_funds" do
-          subject
-          expect(project).to be_waiting_funds
+          it "should go to waiting_funds" do
+            expect(project).to be_waiting_funds
+          end
+        end
+        context "and is flexible project" do
+          it "should go to waiting_funds" do
+            expect(project).to be_waiting_funds
+          end
         end
       end
 
@@ -211,11 +218,29 @@ RSpec.describe Project::StateMachineHandler, type: :model do
         end
       end
 
-      context 'when project not hit the goal' do
-        it{ is_expected.to eq true }
-        it "should go to failed" do
-          subject
-          expect(project).to be_failed
+      context "when project not hit the goal" do
+        before do
+          project.update_attribute :online_days, 1
+        end
+
+        let(:project_state){ 'waiting_funds' }
+
+        context "and the project is flexible" do
+          before do
+            create(:flexible_project, project: project)
+          end
+          it{ is_expected.to eq true }
+          it "should go to success" do
+            subject
+            expect(project).to be_successful
+          end
+        end
+        context 'and the project is not flexible' do
+          it{ is_expected.to eq true }
+          it "should go to failed" do
+            subject
+            expect(project).to be_failed
+          end
         end
       end
     end

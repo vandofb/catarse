@@ -1,4 +1,5 @@
 Catarse::Application.routes.draw do
+  mount RedactorRails::Engine => '/redactor_rails'
   mount JasmineRails::Engine => '/specs' if defined?(JasmineRails)
   devise_for(
     :users,
@@ -17,13 +18,19 @@ Catarse::Application.routes.draw do
 
   filter :locale, exclude: /\/auth\//
 
-  mount CatarsePaypalExpress::Engine => "/", as: :catarse_paypal_express
   mount CatarseMoip::Engine => "/", as: :catarse_moip
   mount CatarsePagarme::Engine => "/", as: :catarse_pagarme
   mount CatarseApi::Engine => "/api", as: :catarse_api
-#  mount CatarseWepay::Engine => "/", as: :catarse_wepay
+ #mount CatarseWepay::Engine => "/", as: :catarse_wepay
+  mount Dbhero::Engine => "/dbhero", as: :dbhero
 
-  get '/post_preview' => 'post_preview#show', as: :post_preview
+  resources :bank_accounts, except: [:destroy, :index] do
+    member do
+      get 'confirm'
+      put 'request_refund'
+    end
+  end
+
   resources :categories, only: [] do
     member do
       get :subscribe, to: 'categories/subscriptions#create'
@@ -31,47 +38,50 @@ Catarse::Application.routes.draw do
     end
   end
   resources :auto_complete_projects, only: [:index]
-  resources :projects, only: [:index, :create, :update, :edit, :new, :show] do
-    resources :posts, controller: 'projects/posts', only: [ :index, :create, :destroy ]
-    resources :rewards, only: [ :index, :create, :update, :destroy, :new, :edit ] do
-      member do
-        post 'sort'
-      end
-    end
-    resources :contributions, {controller: 'projects/contributions'} do
-      member do
-        put 'credits_checkout'
-      end
-    end
+  resources :donations, only: [:create] do
     collection do
-      get 'video'
+      get :confirm
     end
+  end
+  resources :auto_complete_cities, only: [:index]
+  resources :projects, only: [ :index, :create, :update, :edit, :new, :show] do
+    resources :accounts, only: [:create, :update]
+    resources :posts, controller: 'projects/posts', only: [ :destroy ]
+    resources :rewards do
+      post :sort, on: :member
+    end
+    resources :contributions, {except: [:index], controller: 'projects/contributions'} do
+      collection do
+        get :fallback_create, to: 'projects/contributions#create'
+      end
+      member do
+        get 'toggle_anonymous'
+        get :second_slip
+        get :no_account_refund
+      end
+      put :credits_checkout, on: :member
+    end
+
+    get 'video', on: :collection
     member do
-      get :reminder, to: 'projects/reminders#create'
-      delete :reminder, to: 'projects/reminders#destroy'
-      get :metrics, to: 'projects/metrics#index'
+      get 'insights'
       put 'pay'
       get 'embed'
       get 'video_embed'
-      get 'about_mobile'
       get 'embed_panel'
       get 'send_to_analysis'
       get 'publish'
     end
   end
   resources :users do
-    resources :projects, controller: 'users/projects', only: [ :index ]
     resources :credit_cards, controller: 'users/credit_cards', only: [ :destroy ]
     member do
       get :unsubscribe_notifications
       get :credits
       get :settings
+      get :billing
       get :reactivate
-    end
-    resources :contributions, controller: 'users/contributions', only: [:index] do
-      member do
-        get :request_refund
-      end
+      post :new_password
     end
 
     resources :unsubscribes, only: [:create]
@@ -87,36 +97,23 @@ Catarse::Application.routes.draw do
   get "/privacy-policy" => 'high_voltage/pages#show', id: 'privacy_policy'
   get "/start" => 'high_voltage/pages#show', id: 'start'
   get "/jobs" => 'high_voltage/pages#show', id: 'jobs'
-  get "/guides" => 'high_voltage/pages#show', id: 'guides'
+  get "/hello" => 'high_voltage/pages#show', id: 'hello'
+  get "/press" => 'high_voltage/pages#show', id: 'press'
+  get "/assets" => 'high_voltage/pages#show', id: 'assets'
+  get "/guides" => 'high_voltage/pages#show', id: 'guides', as: :guides
+  get "/new-admin" => 'high_voltage/pages#show', id: 'new_admin'
+  get "/explore" => 'high_voltage/pages#show', id: 'explore'
+  get "/team" => 'high_voltage/pages#show', id: 'team'
+  get "/flex" => 'high_voltage/pages#show', id: 'flex'
 
 
-
-  # Channels
+  # User permalink profile
   constraints SubdomainConstraint do
-    namespace :channels, path: '' do
-
-      namespace :admin do
-        namespace :reports do
-          resources :subscriber_reports, only: [ :index ]
-        end
-        resources :posts
-        resources :partners
-        resources :followers, only: [ :index ]
-      end
-
-      resources :posts
-      get '/', to: 'profiles#show', as: :profile
-      get '/how-it-works', to: 'profiles#how_it_works', as: :about
-      resource :profile
-      # NOTE We use index instead of create to subscribe comming back from auth via GET
-      resource :channels_subscriber, only: [:show, :destroy], as: :subscriber
-    end
+    get "/", to: 'users#show'
   end
 
   # Root path should be after channel constraints
   root to: 'projects#index'
-
-  get "/explore" => "explore#index", as: :explore
 
   namespace :reports do
     resources :contribution_reports_for_project_owners, only: [:index]
@@ -136,20 +133,18 @@ Catarse::Application.routes.draw do
       end
     end
 
-    resources :statistics, only: [ :index ]
     resources :financials, only: [ :index ]
 
     resources :contributions, only: [ :index, :update, :show ] do
       member do
         get :second_slip
-        put 'confirm'
-        put 'pendent'
+        put 'pay'
         put 'change_reward'
         put 'refund'
-        put 'hide'
-        put 'cancel'
+        put 'trash'
         put 'request_refund'
-        put 'push_to_trash'
+        put 'chargeback'
+        put 'gateway_refund'
       end
     end
     resources :users, only: [ :index ]
@@ -158,6 +153,8 @@ Catarse::Application.routes.draw do
       resources :contribution_reports, only: [ :index ]
     end
   end
+
+  resource :api_token, only: [:show]
 
   get "/:permalink" => "projects#show", as: :project_by_slug
 

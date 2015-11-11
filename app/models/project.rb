@@ -1,91 +1,99 @@
 # coding: utf-8
 class Project < ActiveRecord::Base
+  include I18n::Alchemy
+  PUBLISHED_STATES = ['online', 'waiting_funds', 'successful', 'failed']
+  HEADLINE_MAXLENGTH = 100
+  NAME_MAXLENGTH = 50
+
+  include Statesman::Adapters::ActiveRecordQueries
   include PgSearch
 
-  include Shared::CatarseAutoHtml
   include Shared::StateMachineHelpers
   include Shared::Queued
 
   include Project::StateMachineHandler
+  include Project::StateValidator
   include Project::VideoHandler
   include Project::CustomValidators
-  include Project::RemindersHandler
   include Project::ErrorGroups
+  include Project::FlexibleHandler
 
   has_notifications
 
   mount_uploader :uploaded_image, ProjectUploader
 
-  delegate  :display_online_date, :display_status, :progress, :display_progress,
+  delegate  :display_online_date, :display_card_status, :display_status, :progress,
             :display_image, :display_expires_at, :remaining_text, :time_to_go,
-            :display_pledged, :display_goal, :remaining_days, :progress_bar,
+            :display_pledged, :display_pledged_with_cents, :display_goal, :remaining_days, :progress_bar,
             :status_flag, :state_warning_template, :display_card_class, :display_errors, to: :decorator
 
   belongs_to :user
   belongs_to :category
-  has_and_belongs_to_many :channels
+  belongs_to :city
+  has_one :flexible_project
   has_one :project_total
+  has_one :account, class_name: "ProjectAccount", inverse_of: :project
   has_many :rewards
   has_many :contributions
+  has_many :contribution_details
+  has_many :payments, through: :contributions
   has_many :posts, class_name: "ProjectPost", inverse_of: :project
   has_many :budgets, class_name: "ProjectBudget", inverse_of: :project
   has_many :unsubscribes
 
-  accepts_nested_attributes_for :rewards
-  accepts_nested_attributes_for :channels
+  has_many :project_transitions, autosave: false
+
+  accepts_nested_attributes_for :rewards, allow_destroy: true
   accepts_nested_attributes_for :user
-  accepts_nested_attributes_for :posts, allow_destroy: true#, reject_if: ->(x) { x[:title].blank? || x[:comment].blank? }
+  accepts_nested_attributes_for :account
+  accepts_nested_attributes_for :posts, allow_destroy: true, reject_if: ->(x) { x[:title].blank? || x[:comment_html].blank? }
   accepts_nested_attributes_for :budgets, allow_destroy: true, reject_if: ->(x) { x[:name].blank? || x[:value].blank? }
 
-  catarse_auto_html_for field: :about, video_width: 600, video_height: 403
-
-  pg_search_scope :search_on_name,
-    against: [[:name, 'A'], [:permalink, 'C'], [:headline, 'B']],
-    associated_against: {
-      category: [:name_pt, :name_en]
+  pg_search_scope :search_tsearch,
+    against: "full_text_index",
+    using: {
+      tsearch: {
+        dictionary: "portuguese",
+        tsvector_column: "full_text_index"
+      }
     },
-    using: {tsearch: {dictionary: "portuguese"}},
     ignoring: :accents
 
-  pg_search_scope :pg_search, against: [
-      [:name, 'A'],
-      [:headline, 'B'],
-      [:about, 'C']
-    ],
-    associated_against:  {
-      user: [:name, :address_city ],
-      category: [:name_pt, :name_en]
-    },
-    using: {tsearch: {dictionary: "portuguese"}},
+  pg_search_scope :search_trm,
+    against: "name",
+    using: :trigram,
     ignoring: :accents
+
+  def self.pg_search term
+    search_tsearch(term).presence || search_trm(term)
+  end
 
   # Used to simplify a has_scope
   scope :successful, ->{ with_state('successful') }
   scope :with_project_totals, -> { joins('LEFT OUTER JOIN project_totals ON project_totals.project_id = projects.id') }
 
   scope :by_progress, ->(progress) { joins(:project_total).where("project_totals.pledged >= projects.goal*?", progress.to_i/100.to_f) }
-  scope :by_channel, ->(channel_id) { joins(:channels).where("channels.id = ?", channel_id) }
   scope :by_user_email, ->(email) { joins(:user).where("users.email = ?", email) }
   scope :by_id, ->(id) { where(id: id) }
   scope :by_goal, ->(goal) { where(goal: goal) }
   scope :by_category_id, ->(id) { where(category_id: id) }
-  scope :by_online_date, ->(online_date) { where("online_date::date = ?", online_date.to_date) }
-  scope :by_expires_at, ->(expires_at) { where("projects.expires_at::date = ?", expires_at.to_date) }
-  scope :by_updated_at, ->(updated_at) { where("updated_at::date = ?", updated_at.to_date) }
+  scope :by_online_date, ->(online_date) { where(online_date: Time.zone.parse( online_date ).. Time.zone.parse( online_date ).end_of_day) }
+  scope :by_expires_at, ->(expires_at) { where(expires_at: Time.zone.parse( expires_at ).. Time.zone.parse( expires_at ).end_of_day) }
+  scope :by_updated_at, ->(updated_at) { where(updated_at: Time.zone.parse( updated_at ).. Time.zone.parse( updated_at ).end_of_day) }
   scope :by_permalink, ->(p) { without_state('deleted').where("lower(permalink) = lower(?)", p) }
   scope :recommended, -> { where(recommended: true) }
   scope :in_funding, -> { not_expired.with_states(['online']) }
   scope :name_contains, ->(term) { where("unaccent(upper(name)) LIKE ('%'||unaccent(upper(?))||'%')", term) }
   scope :user_name_contains, ->(term) { joins(:user).where("unaccent(upper(users.name)) LIKE ('%'||unaccent(upper(?))||'%')", term) }
-  scope :near_of, ->(address_state) { where("EXISTS(SELECT true FROM users u WHERE u.id = projects.user_id AND lower(u.address_state) = lower(?))", address_state) }
   scope :to_finish, ->{ expired.with_states(['online', 'waiting_funds']) }
   scope :visible, -> { without_states(['draft', 'rejected', 'deleted', 'in_analysis', 'approved']) }
-  scope :financial, -> { with_states(['online', 'successful', 'waiting_funds']).where("projects.expires_at > (current_timestamp - '15 days'::interval)") }
-  scope :expired, -> { where("projects.expires_at < current_timestamp") }
-  scope :not_expired, -> { where("projects.expires_at >= current_timestamp") }
-  scope :expiring, -> { not_expired.where("projects.expires_at <= (current_timestamp + interval '2 weeks')") }
-  scope :not_expiring, -> { not_expired.where("NOT (projects.expires_at <= (current_timestamp + interval '2 weeks'))") }
-  scope :recent, -> { where("(current_timestamp - projects.online_date) <= '5 days'::interval") }
+  scope :financial, -> { with_states(['online', 'successful', 'waiting_funds']).where(expires_at: 15.days.ago.. Time.current) }
+  scope :expired, -> { where("projects.is_expired") }
+  scope :not_expired, -> { where("not projects.is_expired") }
+  scope :expiring, -> { not_expired.where(expires_at: Time.current.. 2.weeks.from_now) }
+  scope :not_expiring, -> { not_expired.where.not(expires_at: Time.current.. 2.weeks.from_now) }
+  scope :recent, -> { where(online_date: 5.days.ago.. Time.current) }
+  scope :ordered, -> { order(created_at: :desc)}
   scope :order_status, ->{ order("
                                      CASE projects.state
                                      WHEN 'online' THEN 1
@@ -104,70 +112,30 @@ class Project < ActiveRecord::Base
             END ASC, projects.online_date DESC, projects.created_at DESC")
   }
 
-  scope :from_channels, ->(channels){
-    where("EXISTS (SELECT true FROM channels_projects cp WHERE cp.project_id = projects.id AND cp.channel_id = ?)", channels)
+  scope :with_contributions_confirmed_last_day, -> {
+    joins(:contributions).merge(Contribution.confirmed_last_day).uniq
   }
 
-  scope :with_contributions_confirmed_today, -> {
-    joins(:contributions).merge(Contribution.confirmed_today).uniq
-  }
-
-  scope :expiring_in_less_of, ->(time) {
-    with_state('online').where("(projects.expires_at - current_date) <= ?", time)
-  }
-
-  scope :of_current_week, -> {
-    where("
-      projects.online_date AT TIME ZONE '#{Time.zone.tzinfo.name}' >= (current_timestamp AT TIME ZONE '#{Time.zone.tzinfo.name}' - '7 days'::interval)
-    ")
-  }
-
-  scope :using_pagarme, -> (permalinks) {
-    where("projects.permalink in (:permalinks) OR
-           projects.online_date::date  AT TIME ZONE '#{Time.zone.tzinfo.name}' >= '2014-11-10'::date AT TIME ZONE '#{Time.zone.tzinfo.name}'",
-          { permalinks: permalinks })
-  }
-
-  scope :not_using_pagarme, -> {
-    where("projects.permalink not in (:permalinks) AND projects.online_date::date AT TIME ZONE '#{Time.zone.tzinfo.name}' < '2014-11-10'::date AT TIME ZONE '#{Time.zone.tzinfo.name}'",
-          { permalinks: (CatarseSettings[:projects_enabled_to_use_pagarme].split(',').map(&:strip) rescue []) })
-  }
+  scope :of_current_week, -> { where(online_date: 7.days.ago.. Time.current) }
 
   attr_accessor :accepted_terms
 
-  # Draft state validtions
   validates_acceptance_of :accepted_terms, on: :create
+  ##validation for all states
   validates_presence_of :name, :user, :category, :permalink
-  validates_length_of :headline, maximum: 140
-  validates_numericality_of :online_days, less_than_or_equal_to: 60, greater_than: 0, if: ->(p){ p.online_days.present? }
+  validates_length_of :headline, maximum: HEADLINE_MAXLENGTH
+  validates_numericality_of :online_days, less_than_or_equal_to: 60, greater_than: 0,
+    if: ->(p){ p.online_days.present? && ( p.online_days_was.nil? || p.online_days_was <= 60 ) }
   validates_numericality_of :goal, greater_than: 9, allow_blank: true
   validates_uniqueness_of :permalink, case_sensitive: false
-  validates_format_of :permalink, with: /(\w|-)*/
+  validates_format_of :permalink, with: /\A(\w|-)*\Z/
 
-  validates_with StateValidator
 
   [:between_created_at, :between_expires_at, :between_online_date, :between_updated_at].each do |name|
     define_singleton_method name do |starts_at, ends_at|
-      between_dates name.to_s.gsub('between_',''), starts_at, ends_at
-    end
-  end
-
-  def self.with_payment_engine(payment_engine_name)
-    case payment_engine_name
-    when 'pagarme' then
-      self.enabled_to_use_pagarme
-    when 'moip' then
-      self.not_using_pagarme
-    else
-      self
-    end
-  end
-
-  def self.send_verify_moip_account_notification
-    expiring_in_less_of('7 days').find_each do |project|
-      unless project.using_pagarme?
-        project.notify_owner(:verify_moip_account, { from_email: CatarseSettings[:email_payments]})
-      end
+      return all unless starts_at.present? && ends_at.present?
+      field = name.to_s.gsub('between_','')
+      where(field => Time.zone.parse( starts_at ).. Time.zone.parse( ends_at ).end_of_day)
     end
   end
 
@@ -180,30 +148,16 @@ class Project < ActiveRecord::Base
     order(sort_field)
   end
 
-  def self.enabled_to_use_pagarme
-    begin
-      permalinks = CatarseSettings[:projects_enabled_to_use_pagarme].split(',').map(&:strip)
-    rescue
-      permalinks = []
-    end
-
-    self.using_pagarme(permalinks)
+  def has_blank_service_fee?
+    payments.with_state(:paid).where("NULLIF(gateway_fee, 0) IS NULL").present?
   end
 
   def can_show_account_link?
     ['online', 'waiting_funds', 'successful', 'approved'].include? state
   end
 
-  def can_show_funding_period?
-    ['online', 'waiting_funds', 'successful', 'failed'].include? state
-  end
-
   def can_show_preview_link?
-    ['draft', 'approved', 'rejected', 'in_analysis'].include? state
-  end
-
-  def using_pagarme?
-    Project.enabled_to_use_pagarme.include?(self)
+    !published?
   end
 
   def subscribed_users
@@ -214,16 +168,12 @@ class Project < ActiveRecord::Base
     @decorator ||= ProjectDecorator.new(self)
   end
 
-  def expires_at
-    @expires_at ||= Project.where(id: self.id).pluck('projects.expires_at').first
-  end
-
   def pledged
-    project_total.try(:pledged).to_f
+    @pledged ||= project_total.try(:pledged).to_f
   end
 
   def total_contributions
-    project_total.try(:total_contributions).to_i
+    @total_contributions ||= project_total.try(:total_contributions).to_i
   end
 
   def total_payment_service_fee
@@ -231,43 +181,30 @@ class Project < ActiveRecord::Base
   end
 
   def selected_rewards
-    rewards.sort_asc.where(id: contributions.with_state('confirmed').map(&:reward_id))
+    rewards.sort_asc.where(id: contributions.where('contributions.is_confirmed').map(&:reward_id))
   end
 
   def accept_contributions?
     online? && !expired?
   end
-
   def reached_goal?
     pledged >= goal
   end
 
   def expired?
-    expires_at && expires_at < Time.zone.now
+    expires_at && pluck_from_database("is_expired")
   end
 
   def in_time_to_wait?
-    contributions.with_state('waiting_confirmation').present?
-  end
-
-  def pledged_and_waiting
-    contributions.with_states(['confirmed', 'waiting_confirmation']).sum(:value)
+    payments.waiting_payment.exists?
   end
 
   def new_draft_recipient
     User.find_by_email CatarseSettings[:email_projects]
   end
 
-  def last_channel
-    @last_channel ||= channels.last
-  end
-
-  def notification_type type
-    channels.first ? "#{type}_channel".to_sym : type
-  end
-
   def should_fail?
-    expired? && !reached_goal?
+    expired? && !reached_goal? && !is_flexible?
   end
 
   def notify_owner(template_name, params = {})
@@ -290,21 +227,47 @@ class Project < ActiveRecord::Base
     end
   end
 
-  def already_deployed?
-    self.online? || self.successful? || self.failed? || self.waiting_funds?
+  def delete_from_reminder_queue(user_id)
+    self.notifications.where(template_name: 'reminder', user_id: user_id).destroy_all
   end
 
-  private
-  def self.between_dates(attribute, starts_at, ends_at)
-    return all unless starts_at.present? && ends_at.present?
-    where("(projects.#{attribute} AT TIME ZONE '#{Time.zone.tzinfo.name}')::date between to_date(?, 'dd/mm/yyyy') and to_date(?, 'dd/mm/yyyy')", starts_at, ends_at)
+  def published?
+    pluck_from_database("is_published")
   end
 
-  def self.get_routes
-    routes = Rails.application.routes.routes.map do |r|
-      r.path.spec.to_s.split('/').second.to_s.gsub(/\(.*?\)/, '')
+  def expires_fragments *fragments
+    base = ActionController::Base.new
+    fragments.each do |fragment|
+      base.expire_fragment([fragment, id])
     end
-    routes.compact.uniq.reject(&:empty?)
   end
 
+  def to_analytics
+    {
+      id: self.id,
+      permalink: self.permalink,
+      total_contributions: self.total_contributions,
+      pledged: self.pledged,
+      project_state: self.state,
+      category: self.category.name_pt,
+      project_goal: self.goal,
+      project_online_date: self.online_date,
+      project_expires_at: self.expires_at,
+      project_address_city: self.account.try(:address_city),
+      project_address_state: self.account.try(:address_state),
+      account_entity_type: self.account.try(:entity_type)
+    }
+  end
+
+  def to_analytics_json
+    to_analytics.to_json
+  end
+
+  def pluck_from_database attribute
+    Project.where(id: self.id).pluck("projects.#{attribute}").first
+  end
+
+  def state_machine
+    @state_machine ||= FlexibleProjectMachine.new(self, transition_class: ProjectTransition)
+  end
 end

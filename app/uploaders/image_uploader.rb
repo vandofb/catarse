@@ -1,7 +1,7 @@
 # encoding: utf-8
 
 class ImageUploader < CarrierWave::Uploader::Base
-  include CarrierWave::RMagick
+  include CarrierWave::MiniMagick
 
   def extension_white_list
     %w(jpg jpeg gif png) unless mounted_as == :video_thumbnail

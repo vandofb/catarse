@@ -1,5 +1,7 @@
 class SubdomainConstraint
   def self.matches?(request)
-    Channel.pluck(:permalink).include? request.subdomain
+    if request.subdomain.present?
+      User.with_permalink.where("lower(permalink) = lower(?)", request.subdomain).exists?
+    end
   end
 end

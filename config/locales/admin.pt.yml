@@ -12,6 +12,7 @@ pt:
         goal: 'Meta'
         total_payment_service_fee: 'Taxa do MP'
         total_catarse_fee: 'Taxa do Catarse'
+        zero_fee: 'Apoio sem taxa?'
         repass_value: 'Vl. Repasse'
         expires_at: 'Finaliza'
         online_date: 'Entrou no ar'
@@ -32,6 +33,9 @@ pt:
           bank_data: 'Dados bancarios'
           document: 'CPF / CNPJ'
           email: 'E-mail'
+          state_inscription: 'Incrição estadual'
+          address: 'Endereço'
+          phone_number: 'Telefone'
           permalink: 'Permalink do projeto'
     projects:
       index:
@@ -77,6 +81,7 @@ pt:
       index:
         title: "Gerenciamento de apoiadores"
         menu: "Apoiadores"
+        new_menu: "Usuários - Beta"
         credits: "Créditos"
         credits_view: "Créditos calculados"
         id: Id
@@ -103,6 +108,7 @@ pt:
           hide: 'Apoio escondido com sucesso!'
           cancel: 'Apoio cancelado com sucesso!'
           push_to_trash: 'Apoio deletado com sucesso!'
+          request_refund: 'Reembolso solicitado com sucesso!'
       show:
         contribution_info: 'Informações do contribution %{key}'
         payment_id: 'ID do pagamento'
@@ -130,6 +136,7 @@ pt:
           acquirer: 'Nome da operadora de cartão'
           user: 'ID, Nome, Email ou Email de pagamento'
           payment_id: Chave, ID do meio de pagamento ou TID da operadora'
+        last_state: 'Estado anterior'
         acquirer: 'Operadora'
         payment_tax: 'Taxa meio de pagamento'
         project_state: 'Estado do projeto'
@@ -146,10 +153,12 @@ pt:
         confirm_contribution: 'Confirmar apoio'
         unconfirm_contribution: 'Desconfirmar apoio'
         refund_contribution: 'Estornar apoio'
-        request_refund: 'Solicitar reembolso direto'
+        request_refund: 'Pedir Reembolso'
+        direct_refund: 'Reembolso Direto'
         title: "Gerenciamento de apoios"
-        state: 'Estado'
+        state: 'Estado atual'
         menu: "Apoios"
+        new_menu: "Apoios - Beta"
         anonymous: Anônimo?
         contribution: Apoio
         confirmed: Confirmado?

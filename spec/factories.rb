@@ -19,43 +19,25 @@ FactoryGirl.define do
     "foo_page_#{n}"
   end
 
-  factory :channel_partner do |f|
-    f.url "http://google.com"
-    f.image File.open("#{Rails.root}/spec/support/testimg.png")
-    f.association :channel
-  end
-
   factory :category_follower do |f|
     f.association :user
     f.association :category
   end
 
-  factory :user_without_bank_data, class: User do |f|
-    f.name "Foo bar"
-    f.full_name "Foo bar"
-    f.password "123456"
-    f.cpf "123456"
-    f.uploaded_image File.open("#{Rails.root}/spec/support/testimg.png")
-    f.email { generate(:email) }
-    f.bio "This is Foo bar's biography."
-    f.address_street 'fooo'
-    f.address_number '123'
-    f.address_city 'fooo bar'
-    f.address_state 'fooo'
-    f.address_neighbourhood 'bar'
-    f.address_zip_code '123344333'
-    f.phone_number '1233443355'
+  factory :country do |f|
+    f.name "Brasil"
   end
 
   factory :user do |f|
     f.association :bank_account
+    f.permalink { generate(:permalink) }
     f.name "Foo bar"
-    f.full_name "Foo bar"
     f.password "123456"
-    f.cpf "123456"
+    f.cpf "97666238991"
     f.uploaded_image File.open("#{Rails.root}/spec/support/testimg.png")
     f.email { generate(:email) }
-    f.bio "This is Foo bar's biography."
+    f.about_html "This is Foo bar's biography."
+    f.association :country, factory: :country
     f.address_street 'fooo'
     f.address_number '123'
     f.address_city 'fooo bar'
@@ -63,6 +45,10 @@ FactoryGirl.define do
     f.address_neighbourhood 'bar'
     f.address_zip_code '123344333'
     f.phone_number '1233443355'
+
+    trait :without_bank_data do
+      bank_account { nil }
+    end
   end
 
   factory :category do |f|
@@ -80,7 +66,8 @@ FactoryGirl.define do
     f.permalink { generate(:permalink) }
     f.association :user
     f.association :category
-    f.about "Foo bar"
+    f.association :city
+    f.about_html "Foo bar"
     f.headline "Foo bar"
     f.goal 10000
     f.online_date Time.now
@@ -91,17 +78,54 @@ FactoryGirl.define do
     f.state 'online'
     f.budget '1000'
     f.uploaded_image File.open("#{Rails.root}/spec/support/testimg.png")
+    after :create do |project| 
+      FactoryGirl.create(:project_transition, to_state: project.state, project: project)
+    end
+    after :build do |project|
+      project.account = build(:project_account, project: nil)
+      project.rewards.build(deliver_at: Time.now, minimum_value: 10, description: 'test')
+    end
+  end
+
+  factory :flexible_project do |f|
+    f.association :project
+  end
+
+  factory :project_transition do |f|
+    f.association :project
+    f.most_recent true
+    f.sort_key 1
+  end
+
+  factory :project_account do |f|
+    f.association :project
+    f.association :bank
+    f.email "foo@bar.com"
+    f.address_zip_code "foo"
+    f.address_neighbourhood "foo"
+    f.address_state "foo"
+    f.address_city "foo"
+    f.address_number "foo"
+    f.address_street "foo"
+    f.phone_number "1234"
+    f.agency "fooo"
+    f.agency_digit "foo"
+    f.owner_document "foo"
+    f.owner_name "foo"
+    f.account "1"
+    f.account_digit "1000"
+    f.account_type "foo"
+  end
+
+  factory :user_link do |f|
+    f.association :user
+    f.link "http://www.foo.com"
   end
 
   factory :project_budget do |f|
     f.association :project
     f.name "Foo Bar"
     f.value "10"
-  end
-
-  factory :channels_subscriber do |f|
-    f.association :user
-    f.association :channel
   end
 
   factory :unsubscribe do |f|
@@ -136,16 +160,64 @@ FactoryGirl.define do
   factory :contribution do |f|
     f.association :project, factory: :project
     f.association :user, factory: :user
-    f.confirmed_at Time.now
     f.value 10.00
-    f.state 'confirmed'
-    f.credits false
-    f.payment_id '1.2.3'
+    f.payer_name 'Foo Bar'
+    f.payer_email 'foo@bar.com'
+    f.anonymous false
+    factory :deleted_contribution do
+      after :create do |contribution|
+        create(:payment, state: 'deleted', value: contribution.value, contribution: contribution, created_at: contribution.created_at)
+      end
+    end
+    factory :refused_contribution do
+      after :create do |contribution|
+        create(:payment, state: 'refused', value: contribution.value, contribution: contribution, created_at: contribution.created_at)
+      end
+    end
+    factory :confirmed_contribution do
+      after :create do |contribution|
+        create(:payment, state: 'paid', gateway: 'Pagarme', value: contribution.value, contribution: contribution, created_at: contribution.created_at, payment_method: 'BoletoBancario')
+      end
+    end
+    factory :pending_contribution do
+      after :create do |contribution|
+        create(:payment, state: 'pending', value: contribution.value, contribution: contribution, created_at: contribution.created_at)
+      end
+    end
+    factory :pending_refund_contribution do
+      after :create do |contribution|
+        create(:payment, state: 'pending_refund', value: contribution.value, contribution: contribution, created_at: contribution.created_at)
+      end
+    end
+    factory :refunded_contribution do
+      after :create do |contribution|
+        create(:payment, state: 'refunded', value: contribution.value, contribution: contribution, created_at: contribution.created_at)
+      end
+    end
+    factory :contribution_with_credits do
+      after :create do |contribution|
+        create(:payment, state: 'paid', gateway: 'Credits', value: contribution.value, contribution: contribution)
+      end
+    end
+  end
+
+  factory :payment do |f|
+    f.association :contribution
+    f.gateway 'Pagarme'
+    f.value 10.00
+    f.installment_value 10.00
+    f.payment_method "CartaoDeCredito"
   end
 
   factory :payment_notification do |f|
     f.association :contribution, factory: :contribution
     f.extra_data {}
+  end
+
+  factory :credit_card do |f|
+    f.association :user
+    f.last_digits '1234'
+    f.card_brand 'Foo'
   end
 
   factory :authorization do |f|
@@ -178,20 +250,17 @@ FactoryGirl.define do
     f.association :project, factory: :project
     f.association :user, factory: :user
     f.title "My title"
-    f.comment "This is a comment"
     f.comment_html "<p>This is a comment</p>"
   end
 
-  factory :channel do
-    name "Test"
-    email "email+channel@foo.bar"
-    description "Lorem Ipsum"
-    sequence(:permalink) { |n| "#{n}-test-page" }
+  factory :state do
+    name { generate(:name) }
+    acronym { generate(:name) }
   end
 
-  factory :state do
-    name "RJ"
-    acronym "RJ"
+  factory :city do |f|
+    f.association :state
+    f.name "foo"
   end
 
   factory :bank do
@@ -202,10 +271,11 @@ FactoryGirl.define do
   factory :bank_account do |f|
     #f.association :user, factory: :user
     f.association :bank, factory: :bank
-    owner_name "Foo"
-    owner_document "000"
+    input_bank_number nil
+    owner_name "Foo Bar"
+    owner_document "97666238991"
     account_digit "1"
-    agency "1"
+    agency "1234"
     agency_digit "1"
     account "1"
   end
@@ -215,17 +285,8 @@ FactoryGirl.define do
     owner_name "Foo"
     owner_document "000"
     account_digit "1"
-    agency "1"
+    agency "1234"
     account '1'
   end
 
-  factory :channel_post do |f|
-    f.association :user, factory: :user
-    f.association :channel, factory: :channel
-    title "My title"
-    f.body "This is a comment"
-    f.body_html "<p>This is a comment</p>"
-  end
-
 end
-

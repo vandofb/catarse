@@ -1,13 +1,14 @@
 source 'https://rubygems.org'
 
-ruby '2.1.5'
+ruby '2.2.3'
 
 gem 'rails', '~> 4.1.6'
 
 #gem 'catarse_api', path: '~/code/catarse_api'
 gem 'catarse_api', github: 'catarse/catarse_api'
-gem 'protected_attributes', '~> 1.0.5' # When upgrade to strong_parameters, remove this gem.
-gem 'rails-observers', '~> 0.1.2'
+gem 'protected_attributes'
+gem 'rails-observers'
+gem 'rb-readline'
 
 gem 'sidekiq',  '~> 3.1.3'
 
@@ -16,9 +17,11 @@ gem "best_in_place", :git => "git://github.com/bernat/best_in_place", ref: "ee95
 
 # State machine for attributes on models
 gem 'state_machine', require: 'state_machine/core'
+gem 'statesman'
 
 # Database and data related
 gem 'pg', '0.17.1'
+gem 'dbhero', '>= 1.1.8'
 gem 'postgres-copy'
 gem 'pg_search'
 gem 'i18n_alchemy'
@@ -28,31 +31,22 @@ gem 'chartkick'
 gem 'catarse_settings_db', '>= 0.1.0'
 
 # Notifications
-gem 'user_notifier', '~> 0.0.5'
+gem 'user_notifier', '~> 0.2.0'
 
 # Mixpanel for backend tracking
 gem 'mixpanel-ruby'
+gem 'mixpanel_client'
 
 # Payment engines
-gem 'catarse_paypal_express', '3.0.2'
-gem 'catarse_moip', '~> 3.1.0'
-gem 'catarse_pagarme', '2.4.2'
-gem 'activemerchant', '1.44.1'
-#gem 'catarse_paypal_express', path: '../catarse_paypal_express'
-#gem 'catarse_moip', path: '../catarse_moip'
-#gem 'catarse_credits', path: '../catarse_credits'
+gem 'catarse_moip', '~> 3.2.0'
+gem 'catarse_pagarme', '~> 2.8.0'
 #gem 'catarse_pagarme', path: '../catarse_pagarme'
-
-#gem 'catarse_pagarme', path: '~/code/catarse_pagarme'
-gem 'catarse_contribution_validator', github: 'catarse/catarse_contribution_validator'
-# gem 'catarse_wepay', '~> 0.0.1'
 
 # Decorators
 gem 'draper'
 
 # Frontend stuff
 gem 'slim-rails'
-gem 'jquery-rails'
 gem 'browser'
 gem "cocoon"
 
@@ -60,37 +54,37 @@ gem "cocoon"
 gem 'high_voltage'
 
 # Authentication and Authorization
+gem 'simple_token_authentication', '~> 1.0' # see semver.org
 gem 'omniauth'
-gem 'omniauth-twitter'
-gem 'omniauth-facebook', '1.4.0'
+gem 'omniauth-facebook'
 gem 'devise'
-gem 'ezcrypto'
 gem 'pundit'
+gem 'json_web_token'
 
 # Email marketing
 gem 'catarse_monkeymail', '>= 0.1.6'
 
 # HTML manipulation and formatting
-gem 'formtastic',   '~> 2.2.1'
 gem 'simple_form'
 gem 'mail_form'
 gem "auto_html"
-gem "RedCloth"
 gem 'kaminari'
+gem 'redactor-rails', github: 'catarse/redactor-rails'
 
 # Uploads
 gem 'carrierwave', '~> 0.10.0'
-gem 'rmagick', :require => 'RMagick'
+gem "mini_magick"
 
 # Other Tools
 gem 'to_xls'
 gem 'ranked-model'
 gem 'feedjira'
-gem 'inherited_resources',        '~> 1.4.1'
-gem 'has_scope', '~> 0.6.0.rc'
+gem 'inherited_resources'
+gem 'has_scope', '>= 0.6.0.rc'
 gem 'spectator-validates_email',  require: 'validates_email'
 gem 'video_info', '>= 1.1.1'
 gem 'httparty', '~> 0.6.1' # this version is required by moip gem, otherwise payment confirmation will break
+gem 'typhoeus'
 
 # Translations
 gem 'http_accept_language'
@@ -116,7 +110,7 @@ group :production do
   gem 'rails_12factor'
 
   # Monitoring with the new new relic
-  gem 'newrelic_rpm', '3.6.5.130'
+  gem 'newrelic_rpm'
 
   # Using dalli and memcachier have not presented significative performance gains
   # Probably this is due to our pattern of cache usage
@@ -125,6 +119,8 @@ group :production do
   #gem 'dalli'
 end
 group :development do
+  gem 'rack-mini-profiler'
+  gem "rails-erd"
   gem "letter_opener"
   gem 'foreman'
   gem 'better_errors'
@@ -132,6 +128,7 @@ group :development do
   gem 'thin'
   # Uncomment only for optimization, should be commented on master branch
   # gem 'rack-mini-profiler'
+  # gem 'ruby-prof'
 end
 
 group :test, :development do
@@ -144,6 +141,7 @@ group :test, :development do
 end
 
 group :test do
+  gem 'zonebie'
   gem 'fakeweb'
   gem 'poltergeist'
   gem 'launchy'
@@ -151,16 +149,14 @@ group :test do
   gem 'shoulda'
   gem 'factory_girl_rails'
   gem 'capybara',   '~> 2.2.0'
-  gem 'coveralls', require: false
   gem 'selenium-webdriver'
 end
 
-gem 'sass-rails', '~> 4.0.0'
-gem 'coffee-rails', '~> 4.0.0'
-gem "compass-rails"
+gem 'sass-rails'
+gem 'coffee-rails'
+gem 'compass-rails'
 gem 'uglifier'
-gem 'compass-960-plugin'
-gem 'sprockets', '~> 2.10.1'
+gem 'sprockets'
 
 # FIXME: Not-anymore-on-development
 # Gems that are with 1 or more years on the vacuum
